@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "f750c",
+    "f750c_cli"
+]
