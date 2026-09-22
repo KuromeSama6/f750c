@@ -5,6 +5,9 @@ use strum::{AsRefStr, Display, EnumString};
 pub enum Opcode {
     EngCall = 0x01,
     Nop = 0x02,
+    CallReg = 0x03,
+    CallImm = 0x04,
+    Ret = 0x05,
 
     // Move
     MovRegImm = 0xa0,

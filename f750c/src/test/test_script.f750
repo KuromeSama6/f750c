@@ -1,0 +1,24 @@
+.data:
+    const SomeNumber: dword 42
+    const SomeString: "Hello, World!"
+    foo: dword 0
+    bar: float 0
+
+_start:
+    mov eax, #SomeNumber
+    add eax, 5
+    mov &foo, eax
+
+    mov rax, #EngCall.Character.Random.FloatRange
+    push -0.5
+    push 0.5
+    engcall
+
+    mov &bar, rax
+    @if rax, float 0.0, jns
+        @if rax, float 0.25, js
+            mov rax, #EngCall.Debug.Log
+            push #SomeString
+            engcall
+        @fi
+    @fi
