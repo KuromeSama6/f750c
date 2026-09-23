@@ -51,7 +51,7 @@ fn main() {
     let output = match f750c::compile_source(&lines, CompileOptions::default()) {
         Ok(output) => output,
         Err(err) => {
-            error!("Error compiling source: {err}");
+            error!("{err}");
             return;
         }
     };
@@ -78,25 +78,48 @@ fn main() {
 
     info!("Bin: {}", bin_path.display());
 
-    // write semantic debug
     if !cli.release {
-        let path = PathBuf::from(format!("{output_file_name}.semantic.txt"));
-        let mut file = match File::create(&path) {
-            Ok(file) => file,
-            Err(e) => {
-                error!("Error creating semantic debug file: {e}");
-                return;
-            }
-        };
+        // write semantic debug
+        {
+            let path = PathBuf::from(format!("{output_file_name}.semantic.txt"));
+            let mut file = match File::create(&path) {
+                Ok(file) => file,
+                Err(e) => {
+                    error!("Error creating semantic debug file: {e}");
+                    return;
+                }
+            };
 
-        for line in output.semantic_lines {
-            if let Err(e) = writeln!(file, "{:?}", line) {
-                error!("Error writing to semantic debug file: {e}");
-                return;
+            for line in &output.semantic_lines {
+                if let Err(e) = writeln!(file, "{}", line) {
+                    error!("Error writing to semantic debug file: {e}");
+                    return;
+                }
             }
+
+            info!("Semantic debug: {}", path.display());
         }
 
-        info!("Semantic debug: {}", path.display());
+        // write semantic debug (expanded)
+        {
+            let path = PathBuf::from(format!("{output_file_name}.semantic_expanded.txt"));
+            let mut file = match File::create(&path) {
+                Ok(file) => file,
+                Err(e) => {
+                    error!("Error creating semantic debug (expanded) file: {e}");
+                    return;
+                }
+            };
+
+            for line in &output.semantic_lines_expanded {
+                if let Err(e) = writeln!(file, "{}", line) {
+                    error!("Error writing to semantic debug (expanded) file: {e}");
+                    return;
+                }
+            }
+
+            info!("Semantic debug (expanded): {}", path.display());
+        }
     }
 
     info!("Compile Successful ({:.3?}s)", start_time.elapsed().as_secs_f64());

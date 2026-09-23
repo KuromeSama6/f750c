@@ -2,15 +2,18 @@
     const SomeNumber: dword 42
     const SomeString: "Hello, World!", 0
     const LoopString: "Loop!", 0
+    const DangerousConstant: dword 0xffffffff
     foo: dword -67
     bar: float 69.420
     magic: word 0x55aa
+    const Arg0: byte 0xff
+    const Arg1: byte 0xf0
 
 _start:
     stackalloc 32
 
     mov a32, 1
-    mov b32, #SomeNumber
+    mov b32, &const SomeNumber
     add c32, 5
     mov d32, &foo
     mov &foo, a32
@@ -24,18 +27,21 @@ _start:
     engcall
 
     mov &bar, a64
-    @if a64, float 0.0, jns
-        @if a64, float 0.25, js
-            mov a64, #EngCall.Debug.Log
-            push #SomeString
-            engcall
-        @fi
-    @fi
 
-    @inline_loop 10
-        mov a64, #EngCall.Debug.Log
-        push #LoopString
-        engcall
-    @endloop
+    @pry DangerousConstant, 5
+
+    push &const Arg0
+    push &const Arg1
+    call _proc
 
     stackfree
+
+_proc:
+    stackalloc 2
+    @getarg a8, 0
+    mov &sp8, a8 ; arg1
+    @getarg a8, 1
+    mov &sp8+1, a8 ; arg0
+
+    stackfree
+    ret

@@ -1,5 +1,6 @@
 //! This module defines the data types and commonly used compound types in the F750 language.
 
+use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use strum::{AsRefStr, Display, EnumString, FromRepr};
 use thiserror::Error;
@@ -90,6 +91,33 @@ pub enum DataTypeLiteral {
     Double(f64),
 }
 
+impl DataTypeLiteral {
+    pub fn data_type(&self) -> DataType {
+        (*self).into()
+    }
+
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            DataTypeLiteral::Byte(v) => Some(*v as i64),
+            DataTypeLiteral::Word(v) => Some(*v as i64),
+            DataTypeLiteral::Dword(v) => Some(*v as i64),
+            DataTypeLiteral::Qword(v) => Some(*v as i64),
+            _ => None,
+        }
+    }
+
+    pub fn value_string(&self) -> String {
+        match self {
+            DataTypeLiteral::Byte(v) => v.to_string(),
+            DataTypeLiteral::Word(v) => v.to_string(),
+            DataTypeLiteral::Dword(v) => v.to_string(),
+            DataTypeLiteral::Qword(v) => v.to_string(),
+            DataTypeLiteral::Float(v) => v.to_string(),
+            DataTypeLiteral::Double(v) => v.to_string(),
+        }
+    }
+}
+
 impl From<SemanticLiteral> for DataTypeLiteral {
     fn from(value: SemanticLiteral) -> Self {
         match value {
@@ -132,6 +160,34 @@ pub struct RegisterSpec {
     pub width: RegisterWidth,
 }
 
+impl RegisterSpec {
+    pub fn new(register: Register, width: RegisterWidth) -> Self {
+        Self { register, width }
+    }
+
+    pub fn qword(register: Register) -> Self {
+        Self::new(register, RegisterWidth::Qword)
+    }
+
+    pub fn dword(register: Register) -> Self {
+        Self::new(register, RegisterWidth::Dword)
+    }
+
+    pub fn word(register: Register) -> Self {
+        Self::new(register, RegisterWidth::Word)
+    }
+
+    pub fn byte(register: Register) -> Self {
+        Self::new(register, RegisterWidth::Byte)
+    }
+}
+
+impl Display for RegisterSpec {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.register.as_ref(), self.width.as_ref())
+    }
+}
+
 /// Represents errors that can occur when parsing a register specification string.
 #[derive(Debug, Clone, Error)]
 pub enum RegisterSpecError {
@@ -161,4 +217,10 @@ impl RegisterSpec {
             width,
         })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingDerefType {
+    Dynamic,
+    Const,
 }

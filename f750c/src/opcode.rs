@@ -64,6 +64,14 @@ pub enum OpcodeMnemonic {
     EngCall,
     #[strum(serialize = "nop")]
     Nop,
+    #[strum(serialize = "call")]
+    Call,
+    #[strum(serialize = "ret")]
+    Ret,
+    #[strum(serialize = "stackalloc")]
+    StackAlloc,
+    #[strum(serialize = "stackfree")]
+    StackFree,
     #[strum(serialize = "mov")]
     Mov,
     #[strum(serialize = "jmp")]
@@ -100,10 +108,6 @@ pub enum OpcodeMnemonic {
     Push,
     #[strum(serialize = "pop")]
     Pop,
-    #[strum(serialize = "stackalloc")]
-    StackAlloc,
-    #[strum(serialize = "stackfree")]
-    StackFree,
 }
 
 /// Represents all register families of the F750 virtual machine.

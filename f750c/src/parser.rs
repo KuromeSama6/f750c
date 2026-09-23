@@ -7,11 +7,11 @@ use std::fmt::Display;
 use std::str::FromStr;
 use log::{debug, trace};
 use thiserror::Error;
-use crate::semantic::{SemanticRepr, SemanticOperand, SemanticArgBody, SemanticBindingDef, SemanticInstruction, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral};
+use crate::semantic::{SemanticRepr, SemanticOperand, SemanticOperandKind, SemanticBindingDef, SemanticInstruction, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral};
 use crate::{semantic, tokenizer, util};
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
 use crate::tokenizer::{Token, TokenStream, TokenizedLine};
-use crate::value::{DataType, RegisterSpec, RegisterSpecError};
+use crate::value::{BindingDerefType, DataType, RegisterSpec, RegisterSpecError};
 
 /// Represents a parsing error with additional details to locate the error in the source code.
 #[derive(Debug, Error, Clone)]
@@ -56,10 +56,16 @@ pub enum ParseError {
     #[error("Invalid register spec: {0}")]
     InvalidRegisterSpec(#[from] RegisterSpecError),
 
+    #[error("Constant register dereference (&const register) is not allowed")]
+    ConstantRegisterDerefNotAllowed,
+    #[error("Constant literal dereference (&const literal) is not allowed")]
+    ConstantLiteralDerefNotAllowed,
     #[error("Literal offset is not allowed")]
     LiteralOffsetNotAllowed,
     #[error("Memory offset on a non-dereferenced register or binding is not allowed")]
     NonDerefOffsetNotAllowed,
+    #[error("Constant binding dereference (&const binding) with an offset is not allowed")]
+    ConstantBindingDerefOffsetNotAllowed,
 }
 
 impl ParseError {
@@ -85,8 +91,8 @@ pub enum ParseLineContext {
 /// Stores properties of a semantic argument during parsing, which are used to construct a [`SemanticOperand`]. This structure is used to accumulate properties of an argument as it is being parsed, and then build the final `SemanticOperand` once all properties have been collected.
 #[derive(Debug, Default)]
 struct SemanticArgBuilder {
-    body: Option<SemanticArgBody>,
-    deref: bool,
+    body: Option<SemanticOperandKind>,
+    deref: Option<BindingDerefType>,
     offset: i64,
 }
 
@@ -95,19 +101,33 @@ impl SemanticArgBuilder {
         let Some(body) = self.body else {
             return Err(ParseError::UnexpectedToken("Expected an operand, found none".to_string()));
         };
+        // disallow const deref of constant register
+        if matches!(body, SemanticOperandKind::Register(_)) && self.deref == Some(BindingDerefType::Const) {
+            return Err(ParseError::ConstantRegisterDerefNotAllowed);
+        }
+
+        // disallow const deref of constant literal
+        if matches!(body, SemanticOperandKind::Literal(_)) && self.deref == Some(BindingDerefType::Const) {
+            return Err(ParseError::ConstantLiteralDerefNotAllowed);
+        }
 
         // disallow literal offset
-        if matches!(body, SemanticArgBody::Literal(_)) && self.offset != 0 {
+        if matches!(body, SemanticOperandKind::Literal(_)) && self.offset != 0 {
             return Err(ParseError::LiteralOffsetNotAllowed);
         }
 
         // disallow offset on non-dereferenced register or binding
-        if !self.deref && self.offset != 0 {
+        if self.deref.is_none() && self.offset != 0 {
             return Err(ParseError::NonDerefOffsetNotAllowed);
         }
 
+        // disallow const deref of binding with offset
+        if matches!(body, SemanticOperandKind::Binding(_)) && self.deref == Some(BindingDerefType::Const) && self.offset != 0 {
+            return Err(ParseError::ConstantBindingDerefOffsetNotAllowed);
+        }
+
         Ok(SemanticOperand {
-            body,
+            kind: body,
             deref: self.deref,
             offset: self.offset,
         })
@@ -339,11 +359,20 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                     builder = SemanticArgBuilder::default();
                 }
                 Token::Deref => {
-                    if builder.deref {
+                    if builder.deref.is_some() {
                         return Err(ParseError::UnexpectedToken("Unexpected dereference after another dereference".to_string()).to_error(stream.cur));
                     }
 
-                    builder.deref = true;
+                    if let Some(Token::Token(s)) = stream.peek_non_whitespace() && s == tokenizer::TOKEN_CONST_BINDING {
+                        stream.next_non_whitespace_or_err()?;
+                        builder.deref = Some(BindingDerefType::Const);
+
+                        // whitespace after &const
+                        stream.expect(Token::Whitespace)?;
+
+                    } else {
+                        builder.deref = Some(BindingDerefType::Dynamic);
+                    }
                 }
                 Token::Hashtag => {
                     // engine parameter
@@ -352,20 +381,20 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                         return Err(ParseError::UnexpectedToken(format!("Expected an engine parameter name after '#', found {next:?}")).to_error(stream.cur));
                     };
 
-                    builder.body = Some(SemanticArgBody::EngineParam(param_name));
+                    builder.body = Some(SemanticOperandKind::EngineParam(param_name));
                 }
                 Token::Token(token) => {
                     // mnenonic as operand
                     if allow_mnemonic_as_operand {
                         if let Ok(mnemonic) = OpcodeMnemonic::from_str(&token) {
-                            builder.body = Some(SemanticArgBody::Mnemonic(mnemonic));
+                            builder.body = Some(SemanticOperandKind::Mnemonic(mnemonic));
                             continue;
                         }
                     }
 
                     // 1. Check if is a register
                     if let Ok(register) = RegisterSpec::parse(&token) {
-                        builder.body = Some(SemanticArgBody::Register(register));
+                        builder.body = Some(SemanticOperandKind::Register(register));
 
                         // check offset
                         builder.offset = parse_token_offset(stream)?;
@@ -379,14 +408,14 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                             Token::IntLiteral(n) => {
                                 if dt.is_floating_point() {
                                     let sem_literal = dt.as_float_literal(n as f64)?;
-                                    builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
+                                    builder.body = Some(SemanticOperandKind::Literal(sem_literal.into()));
                                 } else {
                                     let sem_literal = dt.as_int_literal(n)?;
-                                    builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
+                                    builder.body = Some(SemanticOperandKind::Literal(sem_literal.into()));
                                 }
                             }
                             Token::FloatLiteral(n) => {
-                                builder.body = Some(SemanticArgBody::Literal(dt.as_float_literal(n)?.into()));
+                                builder.body = Some(SemanticOperandKind::Literal(dt.as_float_literal(n)?.into()));
                             }
                             _ => {
                                 return Err(ParseError::UnexpectedToken(format!("Expected a literal value for data type {dt}, found {next:?}")).to_error(stream.cur));
@@ -406,23 +435,23 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                         }
 
                         let symbol = parse_semantic_symbol(label_name, stream)?;
-                        builder.body = Some(SemanticArgBody::Label(symbol));
+                        builder.body = Some(SemanticOperandKind::Label(symbol));
                         builder.offset = parse_token_offset(stream)?;
                         continue;
                     }
 
                     // label
                     let symbol = parse_semantic_symbol(&token, stream)?;
-                    builder.body = Some(SemanticArgBody::Binding(symbol));
+                    builder.body = Some(SemanticOperandKind::Binding(symbol));
                     builder.offset = parse_token_offset(stream)?;
                 }
                 Token::IntLiteral(n) => {
                     let sem_literal = DataType::Dword.as_int_literal(n)?;
-                    builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
+                    builder.body = Some(SemanticOperandKind::Literal(sem_literal.into()));
                 }
                 Token::FloatLiteral(n) => {
                     let sem_literal = DataType::Float.as_float_literal(n)?;
-                    builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
+                    builder.body = Some(SemanticOperandKind::Literal(sem_literal.into()));
                 }
                 _ => {
                     return Err(ParseError::UnexpectedToken(format!("Expected a register, label, binding, or literal as operand, found {next:?}")).to_error(stream.cur));
