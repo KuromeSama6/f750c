@@ -7,11 +7,11 @@ use std::fmt::Display;
 use std::str::FromStr;
 use log::{debug, trace};
 use thiserror::Error;
-use crate::semantic::{SemanticRepr, SemanticOperand, SemanticOperandKind, SemanticBindingDef, SemanticInstruction, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral};
+use crate::semantic::{SemanticRepr, SemanticOperand, SemanticOperandKind, SemanticBindingDef, SemanticInstruction, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral, SemanticDerefType};
 use crate::{semantic, tokenizer, util};
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
 use crate::tokenizer::{Token, TokenStream, TokenizedLine};
-use crate::value::{BindingDerefType, DataType, RegisterSpec, RegisterSpecError};
+use crate::value::{DataType, RegisterSpec, RegisterSpecError};
 
 /// Represents a parsing error with additional details to locate the error in the source code.
 #[derive(Debug, Error, Clone)]
@@ -92,7 +92,7 @@ pub enum ParseLineContext {
 #[derive(Debug, Default)]
 struct SemanticArgBuilder {
     body: Option<SemanticOperandKind>,
-    deref: Option<BindingDerefType>,
+    deref: Option<SemanticDerefType>,
     offset: i64,
 }
 
@@ -102,12 +102,12 @@ impl SemanticArgBuilder {
             return Err(ParseError::UnexpectedToken("Expected an operand, found none".to_string()));
         };
         // disallow const deref of constant register
-        if matches!(body, SemanticOperandKind::Register(_)) && self.deref == Some(BindingDerefType::Const) {
+        if matches!(body, SemanticOperandKind::Register(_)) && self.deref == Some(SemanticDerefType::Const) {
             return Err(ParseError::ConstantRegisterDerefNotAllowed);
         }
 
         // disallow const deref of constant literal
-        if matches!(body, SemanticOperandKind::Literal(_)) && self.deref == Some(BindingDerefType::Const) {
+        if matches!(body, SemanticOperandKind::Literal(_)) && self.deref == Some(SemanticDerefType::Const) {
             return Err(ParseError::ConstantLiteralDerefNotAllowed);
         }
 
@@ -122,7 +122,7 @@ impl SemanticArgBuilder {
         }
 
         // disallow const deref of binding with offset
-        if matches!(body, SemanticOperandKind::Binding(_)) && self.deref == Some(BindingDerefType::Const) && self.offset != 0 {
+        if matches!(body, SemanticOperandKind::Binding(_)) && self.deref == Some(SemanticDerefType::Const) && self.offset != 0 {
             return Err(ParseError::ConstantBindingDerefOffsetNotAllowed);
         }
 
@@ -365,13 +365,13 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
 
                     if let Some(Token::Token(s)) = stream.peek_non_whitespace() && s == tokenizer::TOKEN_CONST_BINDING {
                         stream.next_non_whitespace_or_err()?;
-                        builder.deref = Some(BindingDerefType::Const);
+                        builder.deref = Some(SemanticDerefType::Const);
 
                         // whitespace after &const
                         stream.expect(Token::Whitespace)?;
 
                     } else {
-                        builder.deref = Some(BindingDerefType::Dynamic);
+                        builder.deref = Some(SemanticDerefType::Dynamic);
                     }
                 }
                 Token::Hashtag => {

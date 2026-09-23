@@ -78,7 +78,7 @@ pub fn compile_source(source: &[&str], options: CompileOptions) -> Result<Compil
     let sw = Instant::now();
     let parsed_expanded = construct::expand_construct_source(&parsed)?;
     info!("Compiler construct expansion completed in {:.3?} seconds.", sw.elapsed().as_secs_f64());
-    
+
     // Semantic analysis and bytecode emission
     let mut output = BytecodeStream::new(parsed.len() * 16); // Estimate initial capacity
     output.write_u32(bytecode::F750_MAGIC);

@@ -4,9 +4,9 @@ use std::fmt::{Display, Formatter};
 use log::warn;
 use thiserror::Error;
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic, Register};
-use crate::semantic::{SemanticOperandKind, SemanticCompilerConstruct, SemanticInstruction, SemanticOperand, SemanticRepr, SemanticReprStream};
+use crate::semantic::{SemanticOperandKind, SemanticCompilerConstruct, SemanticInstruction, SemanticOperand, SemanticRepr, SemanticReprStream, SemanticDerefType};
 use crate::tokenizer;
-use crate::value::{BindingDerefType, RegisterSpec};
+use crate::value::{RegisterSpec};
 
 #[derive(Debug, Clone)]
 pub struct ConstructExpansionErrorDetails {
@@ -155,7 +155,7 @@ fn expand_construct_pry(construct: &SemanticCompilerConstruct, out: &mut Vec<Sem
             SemanticOperand::with_body(SemanticOperandKind::Register(RegisterSpec::qword(Register::SourceIndex))),
             SemanticOperand {
                 kind: SemanticOperandKind::Binding(binding.clone()),
-                deref: Some(BindingDerefType::Dynamic),
+                deref: Some(SemanticDerefType::Dynamic),
                 offset: 0,
             },
         ],
@@ -167,7 +167,7 @@ fn expand_construct_pry(construct: &SemanticCompilerConstruct, out: &mut Vec<Sem
         operands: vec![
             SemanticOperand {
                 kind: SemanticOperandKind::Register(RegisterSpec::qword(Register::SourceIndex)),
-                deref: Some(BindingDerefType::Dynamic),
+                deref: Some(SemanticDerefType::Dynamic),
                 offset: 0,
             },
             arg1.clone(),
@@ -207,7 +207,7 @@ fn expand_construct_getarg(construct: &SemanticCompilerConstruct, out: &mut Vec<
             SemanticOperand::with_body(SemanticOperandKind::Register(reg.clone())),
             SemanticOperand {
                 kind: SemanticOperandKind::Register(RegisterSpec::qword(Register::BasePointer)),
-                deref: Some(BindingDerefType::Dynamic),
+                deref: Some(SemanticDerefType::Dynamic),
                 offset: 16 + offset_amount,
             },
         ],

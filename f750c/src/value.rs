@@ -218,9 +218,3 @@ impl RegisterSpec {
         })
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BindingDerefType {
-    Dynamic,
-    Const,
-}

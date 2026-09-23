@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use bitfield_struct::bitfield;
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
 use crate::parser::{ParseError, ParseResult};
-use crate::value::{BindingDerefType, DataType, DataTypeLiteral, RegisterSpec};
+use crate::value::{DataType, DataTypeLiteral, RegisterSpec};
 
 /// Semantic representation of a parsed line in the F750 source code.
 #[derive(Debug, Clone)]
@@ -144,7 +144,7 @@ pub struct SemanticOperand {
     /// The body of the operand.
     pub kind: SemanticOperandKind,
     /// Whether this operand is dereferenced.
-    pub deref: Option<BindingDerefType>,
+    pub deref: Option<SemanticDerefType>,
     /// The memory offset applied to this operand, or zero if no offset is specified.
     pub offset: i64,
 }
@@ -171,11 +171,11 @@ impl SemanticOperand {
     }
 
     pub fn is_dynamic_deref(&self) -> bool {
-        matches!(self.deref, Some(BindingDerefType::Dynamic))
+        matches!(self.deref, Some(SemanticDerefType::Dynamic))
     }
 
     pub fn is_const_deref(&self) -> bool {
-        matches!(self.deref, Some(BindingDerefType::Const))
+        matches!(self.deref, Some(SemanticDerefType::Const))
     }
 
     pub fn is_register(&self) -> bool {
@@ -194,8 +194,8 @@ impl SemanticOperand {
 impl Display for SemanticOperand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.deref {
-            Some(BindingDerefType::Dynamic) => write!(f, "&")?,
-            Some(BindingDerefType::Const) => write!(f, "&const ")?,
+            Some(SemanticDerefType::Dynamic) => write!(f, "&")?,
+            Some(SemanticDerefType::Const) => write!(f, "&const ")?,
             None => {}
         }
 
@@ -209,6 +209,12 @@ impl Display for SemanticOperand {
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticDerefType {
+    Dynamic,
+    Const,
 }
 
 /// Represents the body of a semantic argument.
