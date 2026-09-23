@@ -1,5 +1,9 @@
+//! This module defines opcodes, mnemonics, registers, and other compile-time identifiers for F750. 
+//! These identifiers are not semantic - they are used beyond the parsing stage.
+
 use strum::{AsRefStr, Display, EnumString};
 
+/// Represents the opcodes for the F750 virtual machine. Each opcode is represented by a unique u8 value.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opcode {
@@ -50,6 +54,7 @@ pub enum Opcode {
     PopMem = 0xe3,
 }
 
+/// Represents the mnemonics for the F750 virtual machine opcodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
 pub enum OpcodeMnemonic {
     #[strum(serialize = "engcall")]
@@ -94,6 +99,7 @@ pub enum OpcodeMnemonic {
     Pop,
 }
 
+/// Represents all register families of the F750 virtual machine.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
 pub enum Register {
@@ -117,6 +123,7 @@ pub enum Register {
     InstructionPointer = 0x09,
 }
 
+/// Represents all compiler constructs of the F750 virtual machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
 pub enum CompilerConstruct {
     #[strum(serialize = "if")]

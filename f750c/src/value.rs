@@ -1,46 +1,64 @@
+//! This module defines the data types and commonly used compound types in the F750 language.
+
 use std::str::FromStr;
 use strum::{AsRefStr, Display, EnumString, FromRepr};
 use thiserror::Error;
 use crate::opcode::Register;
-use crate::parser::{ParseError, ParseErrorKind, ParseResult};
-use crate::parser::ParseErrorKind::InvalidRegisterSpec;
+use crate::parser::{ParseErrorDetails, ParseError, ParseResult};
+use crate::parser::ParseError::InvalidRegisterSpec;
 use crate::semantic::SemanticLiteral;
 
+/// Represents the data types in the F750 language.
+/// 
+/// All integer data types are unsigned in their representation, but can be used to represent signed values in two's complement form.
 #[derive(Debug, Clone, Copy, PartialEq, AsRefStr, EnumString, Display)]
 pub enum DataType {
+    /// Represents an 8-bit unsigned integer.
     #[strum(serialize = "byte")]
     Byte,
+    /// Represents a 16-bit unsigned integer.
     #[strum(serialize = "word")]
     Word,
+    /// Represents a 32-bit unsigned integer.
     #[strum(serialize = "dword")]
     Dword,
+    /// Represents a 64-bit unsigned integer.
     #[strum(serialize = "qword")]
     Qword,
+    /// Represents a 32-bit IEEE-754 floating point number.
     #[strum(serialize = "float")]
     Float,
+    /// Represents a 64-bit IEEE-754 floating point number.
     #[strum(serialize = "double")]
     Double,
 }
 
 impl DataType {
+    /// Converts an integer value to a [`SemanticLiteral`] of the appropriate type based on the [`DataType`].
+    /// 
+    /// This function will return an error if the data type is not an integer type (i.e., `Byte`, `Word`, `Dword`, or `Qword`).
     pub fn as_int_literal(&self, value: i64) -> ParseResult<SemanticLiteral> {
         match self {
             DataType::Byte => Ok(SemanticLiteral::Byte(value as u8)),
             DataType::Word => Ok(SemanticLiteral::Word(value as u16)),
             DataType::Dword => Ok(SemanticLiteral::DWord(value as u32)),
             DataType::Qword => Ok(SemanticLiteral::QWord(value as u64)),
-            _ => Err(crate::parser::ParseErrorKind::InvalidDataTypeForLiteral(value.to_string(), *self).to_error(0)),
+            _ => Err(ParseError::InvalidDataTypeForLiteral(value.to_string(), *self).to_error(0)),
         }
     }
     
+    /// Converts a floating point value to a [`SemanticLiteral`] of the appropriate type based on the [`DataType`].
+    /// 
+    /// This function will return an error if the data type is not a floating point type (i.e., `Float` or `Double`).
     pub fn as_float_literal(&self, value: f64) -> ParseResult<SemanticLiteral> {
         match self {
             DataType::Float => Ok(SemanticLiteral::Float(value as f32)),
             DataType::Double => Ok(SemanticLiteral::Double(value)),
-            _ => Err(crate::parser::ParseErrorKind::InvalidDataTypeForLiteral(value.to_string(), *self).to_error(0)),
+            _ => Err(ParseError::InvalidDataTypeForLiteral(value.to_string(), *self).to_error(0)),
         }
     }
 
+    /// Returns whether this data type is a floating point type (i.e., `Float` or `Double`).
     pub fn is_floating_point(&self) -> bool {
         matches!(self, DataType::Float | DataType::Double)
     }
@@ -59,6 +77,9 @@ impl From<DataTypeLiteral> for DataType {
     }
 }
 
+/// Represents a literal value of a specific data type in the F750 language.
+/// 
+/// Refer to [`DataType`] for the supported data types.
 #[derive(Debug, Clone, Copy, PartialEq, Display)]
 pub enum DataTypeLiteral {
     Byte(u8),
@@ -83,25 +104,35 @@ impl From<SemanticLiteral> for DataTypeLiteral {
     }
 }
 
+/// Represents the width of a register (or a view into an underlying register) in the F750 language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, EnumString, Display)]
 pub enum RegisterWidth {
+    /// Represents an 8-bit view into a register.
     #[strum(serialize = "8")]
     Byte,
+    /// Represents a 16-bit view into a register.
     #[strum(serialize = "16")]
     Word,
+    /// Represents a 32-bit view into a register.
     #[strum(serialize = "32")]
     Dword,
+    /// Represents a 64-bit view into a register.
     #[strum(serialize = "64")]
     Qword,
 }
 
+/// Represents a register specification, which includes a register and its width (view).
+/// 
+/// For instance, the register mnemonic `a64` (equivalent to `rax` in x86-64) would be represented as a `RegisterSpec` with a register family of [`Register::A`] and a width of [`RegisterWidth::Qword`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegisterSpec {
+    /// The register family (e.g., `a`, `b`, `c`, `d`, etc.).
     pub register: Register,
+    /// The width (view) of the register (e.g., 8-bit, 16-bit, 32-bit, or 64-bit).
     pub width: RegisterWidth,
 }
 
-
+/// Represents errors that can occur when parsing a register specification string.
 #[derive(Debug, Clone, Error)]
 pub enum RegisterSpecError {
     #[error("Width not specified for register spec '{0}'. Format is <register><width>, i.e. 'a8', 'b16', 'c32', 'd64'")]
@@ -123,7 +154,7 @@ impl RegisterSpec {
         let register = Register::from_str(reg_name).map_err(|_| RegisterSpecError::NoSuchRegister(reg_name.to_string()))?;
 
         let width_str = &register_str[digit_index..];
-        let width = RegisterWidth::from_str(width_str).map_err(|_| RegisterSpecError::NoSuchRegister(width_str.to_string()))?;
+        let width = RegisterWidth::from_str(width_str).map_err(|_| RegisterSpecError::NoSuchWidth(width_str.to_string()))?;
 
         Ok(Self {
             register,
