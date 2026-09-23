@@ -12,6 +12,9 @@ pub enum Opcode {
     CallReg = 0x03,
     CallImm = 0x04,
     Ret = 0x05,
+    StackAllocImm = 0x06,
+    StackAllocReg = 0x07,
+    StackFree = 0x08,
 
     // Move
     MovRegImm = 0xa0,
@@ -97,6 +100,10 @@ pub enum OpcodeMnemonic {
     Push,
     #[strum(serialize = "pop")]
     Pop,
+    #[strum(serialize = "stackalloc")]
+    StackAlloc,
+    #[strum(serialize = "stackfree")]
+    StackFree,
 }
 
 /// Represents all register families of the F750 virtual machine.
@@ -121,6 +128,10 @@ pub enum Register {
     DestinationIndex = 0x08,
     #[strum(serialize = "ip")]
     InstructionPointer = 0x09,
+    #[strum(serialize = "lca")]
+    LoopCounterA = 0x0A,
+    #[strum(serialize = "lcb")]
+    LoopCounterB = 0x0B,
 }
 
 /// Represents all compiler constructs of the F750 virtual machine.

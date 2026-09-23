@@ -2,7 +2,7 @@
 
 use bitfield_struct::bitfield;
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
-use crate::parser::{ParseError, ParseResult, ParserToken, TokenStream};
+use crate::parser::{ParseError, ParseResult};
 use crate::value::{DataType, DataTypeLiteral, RegisterSpec};
 
 /// Represents the semantic definition of a binding.

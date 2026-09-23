@@ -1,3 +1,103 @@
+mod logging;
+
+use std::fs;
+use std::fs::File;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+use clap::Parser;
+use log::{error, info};
+use f750c::{bytecode, CompileOptions};
+
+#[derive(Debug, Clone, Parser)]
+#[command(author, version, name = "f750c")]
+struct Cli {
+    input_path: PathBuf,
+
+    #[arg(short, long = "output-name")]
+    output_name: Option<String>,
+
+    #[arg(short = 'O', long = "output-directory")]
+    output_directory: Option<PathBuf>,
+
+    #[arg(long, default_value_t = false)]
+    release: bool,
+}
+
 fn main() {
-    
+    println!("f750c, the Fight750 State Script compiler");
+    println!("Copyright (c) 2026, KuromeSama6");
+    println!("Bytecode Version {:X}", bytecode::F750_VERSION);
+
+    logging::init();
+    let cli = Cli::parse();
+    let start_time = Instant::now();
+
+    info!("Input path: {:?}", cli.input_path);
+
+    let content = match fs::read_to_string(&cli.input_path) {
+        Ok(content) => content,
+        Err(err) => {
+            error!("Error reading input file: {err}");
+            return;
+        }
+    };
+
+    let lines = content.lines()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let sw = Instant::now();
+    let output = match f750c::compile_source(&lines, CompileOptions::default()) {
+        Ok(output) => output,
+        Err(err) => {
+            error!("Error compiling source: {err}");
+            return;
+        }
+    };
+
+    info!("Compilation completed in {:.3?} seconds.", sw.elapsed().as_secs_f64());
+
+    // process output
+    let output_file_name = cli.output_name.unwrap_or(match cli.input_path.file_prefix() {
+        Some(name) => name.to_string_lossy().to_string(),
+        None => {
+            error!("Could not determine output file name from input path");
+            return;
+        }
+    });
+
+    info!("Output file name: {}", output_file_name);
+
+    // write binary
+    let bin_path = PathBuf::from(format!("{output_file_name}.f750b"));
+    if let Err(e) = fs::write(&bin_path, output.bytes.bytes_ref()) {
+        error!("Error writing output file: {e}");
+        return;
+    }
+
+    info!("Bin: {}", bin_path.display());
+
+    // write semantic debug
+    if !cli.release {
+        let path = PathBuf::from(format!("{output_file_name}.semantic.txt"));
+        let mut file = match File::create(&path) {
+            Ok(file) => file,
+            Err(e) => {
+                error!("Error creating semantic debug file: {e}");
+                return;
+            }
+        };
+
+        for line in output.semantic_lines {
+            if let Err(e) = writeln!(file, "{:?}", line) {
+                error!("Error writing to semantic debug file: {e}");
+                return;
+            }
+        }
+
+        info!("Semantic debug: {}", path.display());
+    }
+
+    info!("Compile Successful ({:.3?}s)", start_time.elapsed().as_secs_f64());
 }

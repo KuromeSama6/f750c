@@ -4,13 +4,19 @@
     const LoopString: "Loop!", 0
     foo: dword -67
     bar: float 69.420
+    magic: word 0x55aa
 
 _start:
+    stackalloc 32
+
     mov a32, 1
     mov b32, #SomeNumber
     add c32, 5
     mov d32, &foo
     mov &foo, a32
+    mov a64, _start
+
+    mov &bp64+4, magic
 
     mov a64, #EngCall.Character.Random.FloatRange
     push float -0.5
@@ -31,3 +37,5 @@ _start:
         push #LoopString
         engcall
     @endloop
+
+    stackfree

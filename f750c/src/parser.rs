@@ -1,14 +1,16 @@
-//! This module defines functions and structures for the tokenization and parsing steps of the F750 compiler.
+//! This module defines functions and structures for the parsing step of the F750 compiler.
 //! 
-//! In the F750 compiler flow, each line in a source file is first tokenized into a sequence of `ParserToken`s, which are then parsed into semantic representations of the source code.
+//! In the F750 compiler flow, each line in a source file is first tokenized into a sequence of `Token`s, which are then parsed into semantic representations of the source code.
 
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::str::FromStr;
+use log::{debug, trace};
 use thiserror::Error;
 use crate::semantic::{SemanticOperand, SemanticArgBody, SemanticBindingDef, SemanticInstruction, SemanticDerefKind, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral};
-use crate::{constants, semantic, token, util};
+use crate::{semantic, tokenizer, util};
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
+use crate::tokenizer::{Token, TokenStream, TokenizedLine};
 use crate::value::{DataType, RegisterSpec, RegisterSpecError};
 
 /// Represents a parsing error with additional details to locate the error in the source code.
@@ -99,126 +101,6 @@ pub enum ParsedLine {
     CompilerConstruct(SemanticCompilerConstruct),
 }
 
-/// Represents a token during tokenization.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ParserToken {
-    Whitespace,
-    Separator,
-    Colon,
-    Offset,
-    Deref,
-    Hashtag,
-    Annotation,
-    /// Represents the namespace separator `::` used in labels and bindings.
-    NamespaceSeparator,
-    IntLiteral(i64),
-    FloatLiteral(f64),
-    /// Represents a quoted string literal, which is enclosed in double quotes.
-    QuotedString(String),
-    /// Represents anything that does not match any of the other token types, such as identifiers, labels, and binding names.
-    Token(String),
-}
-
-/// Utility for managing a stream of tokens during parsing. This structure allows for peeking at the next token, consuming tokens, and checking for the end of the stream.
-#[derive(Debug)]
-pub struct TokenStream {
-    tokens: VecDeque<ParserToken>,
-    pub cur: usize,
-}
-
-impl TokenStream {
-    pub fn new(tokens: &[ParserToken]) -> Self {
-        Self {
-            tokens: VecDeque::from(tokens.to_vec()),
-            cur: 0,
-        }
-    }
-
-    /// Peeks at the next token in the stream without consuming it. If there are no more tokens, it returns `None`.
-    pub fn peek(&self) -> Option<&ParserToken> {
-        self.tokens.get(0)
-    }
-
-    /// Peeks at the `n`th token in the stream without consuming it. If there are fewer than n tokens remaining, it returns `None`.
-    pub fn peek_n(&self, n: usize) -> Option<&ParserToken> {
-        self.tokens.get(n)
-    }
-
-    /// Peeks at the next non-whitespace token in the stream without consuming it.
-    pub fn peek_non_whitespace(&self) -> Option<&ParserToken> {
-        for token in &self.tokens {
-            if token != &ParserToken::Whitespace {
-                return Some(token);
-            }
-        }
-        None
-    }
-
-    /// Consumes and returns the next token in the stream, advancing the current position. If there are no more tokens, it returns `None`.
-    pub fn next(&mut self) -> Option<ParserToken> {
-        let token = self.tokens.pop_front();
-        if token.is_some() {
-            self.cur += 1;
-        }
-        token
-    }
-
-    /// Consumes and returns the next token in the stream, advancing the current position. If there are no more tokens, it returns a `ParseError` indicating an unexpected end of line.
-    pub fn next_or_err(&mut self) -> ParseResult<ParserToken> {
-        let cur = self.cur;
-        self.next().ok_or_else(|| ParseError::UnexpectedEOL.to_error(cur))
-    }
-
-    /// Consumes all `Whitespace` tokens in the stream until a non-`Whitespace` token is encountered or the end of the stream is reached. Returns the next non-whitespace token, or `None` if there are no more tokens.
-    pub fn next_non_whitespace(&mut self) -> Option<ParserToken> {
-        while let Some(token) = self.next() {
-            if token != ParserToken::Whitespace {
-                return Some(token);
-            }
-        }
-
-        None
-    }
-
-    /// Consumes all `Whitespace` tokens in the stream until a non-`Whitespace` token is encountered or the end of the stream is reached. Returns the next non-whitespace token, or a `ParseError` if there are no more tokens.
-    pub fn next_non_whitespace_or_err(&mut self) -> ParseResult<ParserToken> {
-        let cur = self.cur;
-        self.next_non_whitespace().ok_or_else(|| ParseError::UnexpectedEOL.to_error(cur))
-    }
-
-    /// Consumes the next token in the stream and checks if it matches the expected token. Returns `Ok(())` if it matches, or a `ParseError` if it does not.
-    pub fn expect(&mut self, expected: ParserToken) -> ParseResult<()> {
-        let cur = self.cur;
-        let token = self.next_or_err()?;
-        if token != expected {
-            return Err(ParseError::UnexpectedToken(format!("Expected {:?}, found {:?}", expected, token)).to_error(cur));
-        }
-        Ok(())
-    }
-
-    /// Consumes all `Whitespace` tokens in the stream until a non-`Whitespace` token is encountered or the end of the stream is reached. Checks if the next non-whitespace token matches the expected token. Returns `Ok(())` if it matches, or a `ParseError` if it does not.
-    pub fn expect_non_whitespace(&mut self, expected: ParserToken) -> ParseResult<()> {
-        let cur = self.cur;
-        let token = self.next_non_whitespace_or_err()?;
-        if token != expected {
-            return Err(ParseError::UnexpectedToken(format!("Expected {:?}, found {:?}", expected, token)).to_error(cur));
-        }
-        Ok(())
-    }
-
-    /// Consumes all `Whitespace` tokens in the stream until a non-`Whitespace` token is encountered or the end of the stream is reached.
-    pub fn skip_whitespace(&mut self) {
-        while let Some(ParserToken::Whitespace) = self.peek() {
-            self.next();
-        }
-    }
-
-    /// Returns whether there are more tokens in the stream. This does not consume any tokens.
-    pub fn has_more(&self) -> bool {
-        !self.tokens.is_empty()
-    }
-}
-
 /// Stores properties of a semantic argument during parsing, which are used to construct a [`SemanticOperand`]. This structure is used to accumulate properties of an argument as it is being parsed, and then build the final `SemanticOperand` once all properties have been collected.
 #[derive(Debug, Default)]
 struct SemanticArgBuilder {
@@ -264,31 +146,22 @@ impl SemanticArgBuilder {
 /// Parses a source file into a vector of `ParsedLine`s, which represent the semantic structure of the source code. 
 /// 
 /// This function first tokenizes each line of the source file, and then parses the tokens into semantic representations.
-pub fn parse_source(source: &[&str]) -> ParseResult<Vec<ParsedLine>> {
+pub fn parse_source(source: &[TokenizedLine]) -> ParseResult<Vec<ParsedLine>> {
     let mut ctx = ParseLineContext::None;
     let mut ret = Vec::new();
 
+    debug!("Beginning of parse step.");
     for line in source {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let tokens = tokenize_line(line)?;
-        if tokens.is_empty() {
-            continue;
-        }
-
-        let res = parse_line(&tokens, ctx);
+        let res = parse_line(line, ctx);
 
         let parsed_line = res?;
-        println!("{:?}", parsed_line);
+        debug!("{:?}", parsed_line);
 
         if ctx == ParseLineContext::BindingDef && !matches!(parsed_line, ParsedLine::BindingDef(_)) {
             ctx = ParseLineContext::None;
         }
 
-        if ctx == ParseLineContext::None && let ParsedLine::SpecialSection(s) = &parsed_line && s == token::SPECIAL_SECTION_LABEL_DATA {
+        if ctx == ParseLineContext::None && let ParsedLine::SpecialSection(s) = &parsed_line && s == tokenizer::SPECIAL_SECTION_LABEL_DATA {
             ctx = ParseLineContext::BindingDef;
         }
         ret.push(parsed_line);
@@ -297,118 +170,22 @@ pub fn parse_source(source: &[&str]) -> ParseResult<Vec<ParsedLine>> {
     Ok(ret)
 }
 
-/// Tokenizes a line of source code into a vector of `ParserToken`s, which represent the lexical structure of the line.
-fn tokenize_line(line: &str) -> ParseResult<Vec<ParserToken>> {
-    let mut ret = Vec::new();
-    let mut cur = 0usize;
-
-    while cur < line.len() {
-        let c = line[cur..].chars().next().unwrap();
-        match c {
-            token::ATOM_COMMENT => {
-                // Ignore the rest of the line after a comment
-                break;
-            }
-            token::ATOM_WHITESPACE | '\t' => {
-                ret.push(ParserToken::Whitespace);
-                cur += 1;
-            }
-            token::ATOM_SEPARATOR => {
-                ret.push(ParserToken::Separator);
-                cur += 1;
-            }
-            token::ATOM_COLON => {
-                // Handle namespace separator or label colon
-                if cur + 1 < line.len() && line[cur + 1..].starts_with(token::ATOM_COLON) {
-                    ret.push(ParserToken::NamespaceSeparator);
-                    cur += 2; // Skip both colons
-
-                } else {
-                    ret.push(ParserToken::Colon);
-                    cur += 1;
-                }
-            }
-            token::ATOM_PLUS => {
-                ret.push(ParserToken::Offset);
-                cur += 1;
-            }
-            token::ATOM_DEREF => {
-                ret.push(ParserToken::Deref);
-                cur += 1;
-            }
-            token::ATOM_HASHTAG => {
-                // Handle offset with hashtag
-                ret.push(ParserToken::Hashtag);
-                cur += 1;
-            }
-            token::ATOM_AT => {
-                ret.push(ParserToken::Annotation);
-                cur += 1;
-            }
-            _ => {
-                if c == token::ATOM_QUOTE {
-                    // Handle quoted string
-                    let end_quote = line[cur + 1..].find(token::ATOM_QUOTE);
-                    if let Some(end) = end_quote {
-                        let token = &line[cur + 1..cur + 1 + end]; // Exclude quotes
-                        ret.push(ParserToken::QuotedString(token.to_string()));
-                        cur += 1 + end + 1; // Move past the quoted string
-
-                    } else {
-                        // Unterminated quote
-                        return Err(ParseError::UnterminatedQuote.to_error(cur));
-                    }
-
-                } else {
-                    // Handle regular token
-                    let Some(first) = line.chars().nth(cur) else {
-                        return Err(ParseError::UnexpectedEOL.to_error(cur));
-                    };
-
-                    let is_digit = first.is_ascii_digit() || first == '-' || first == '+';
-
-                    let next_special = line[cur..]
-                        .find(|c| token::is_special_atom(c, is_digit))
-                        .unwrap_or(line.len() - cur);
-                    let token = &line[cur..cur + next_special];
-
-                    if let Ok(int_val) = token.parse::<i64>() {
-                        ret.push(ParserToken::IntLiteral(int_val));
-                    } else if let Ok(float_val) = token.parse::<f64>() {
-                        ret.push(ParserToken::FloatLiteral(float_val));
-                    } else {
-                        ret.push(ParserToken::Token(token.to_string()));
-                    }
-                    cur += next_special;
-                }
-            }
-        }
-    }
-
-    // trim whitespace tokens from the end
-    while let Some(ParserToken::Whitespace) = ret.last() {
-        ret.pop();
-    }
-
-    Ok(ret)
-}
-
 /// Parses a line of tokens into a `ParsedLine`, which represents the semantic structure of the line. The parsing behavior may vary depending on the context in which the line is being parsed (e.g., whether it is in a binding definition context).
-fn parse_line(tokens: &[ParserToken], ctx: ParseLineContext) -> ParseResult<ParsedLine> {
+fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine> {
     let mut stream = TokenStream::new(tokens);
 
     // special section
-    if let Some(ParserToken::Token(s)) = stream.peek() && s.starts_with(token::CHAR_DOT) {
+    if let Some(Token::Token(s)) = stream.peek() && s.starts_with(tokenizer::CHAR_DOT) {
         let next = stream.next_or_err()?;
-        let ParserToken::Token(s) = next else {
+        let Token::Token(s) = next else {
             return Err(ParseError::UnexpectedToken(format!("Expected an identifier after '.' for a special section, found {:?}", next)).to_error(stream.cur));
         };
 
-        stream.expect(ParserToken::Colon)?;
+        stream.expect(Token::Colon)?;
         return Ok(ParsedLine::SpecialSection(s));
     }
 
-    let is_label = tokens.len() == 2 && matches!(tokens[1], ParserToken::Colon);
+    let is_label = tokens.len() == 2 && matches!(tokens[1], Token::Colon);
 
     if ctx == ParseLineContext::BindingDef && !is_label {
         let binding_name: String;
@@ -417,10 +194,10 @@ fn parse_line(tokens: &[ParserToken], ctx: ParseLineContext) -> ParseResult<Pars
         let first = stream.next_non_whitespace_or_err()?;
 
         match first {
-            ParserToken::Token(token) => {
-                if token == token::TOKEN_CONST_BINDING {
+            Token::Token(token) => {
+                if token == tokenizer::TOKEN_CONST_BINDING {
                     let name = stream.next_non_whitespace_or_err()?;
-                    if let ParserToken::Token(s) = name {
+                    if let Token::Token(s) = name {
                         binding_name = s;
                         is_constant = true;
 
@@ -437,7 +214,7 @@ fn parse_line(tokens: &[ParserToken], ctx: ParseLineContext) -> ParseResult<Pars
             }
         }
 
-        stream.expect_non_whitespace(ParserToken::Colon)?;
+        stream.expect_non_whitespace(Token::Colon)?;
 
         let values = parse_binding_values(&mut stream)?;
         let ret = SemanticBindingDef {
@@ -450,10 +227,10 @@ fn parse_line(tokens: &[ParserToken], ctx: ParseLineContext) -> ParseResult<Pars
     }
 
     // compiler construct
-    if let Some(ParserToken::Annotation) = stream.peek() {
+    if let Some(Token::Annotation) = stream.peek() {
         stream.next_or_err()?; // consume the annotation token (@)
         let next = stream.next_non_whitespace_or_err()?;
-        let ParserToken::Token(construct_name) = next else {
+        let Token::Token(construct_name) = next else {
             return Err(ParseError::UnexpectedToken(format!("Expected a compiler construct name after '@', found {:?}", next)).to_error(stream.cur));
         };
 
@@ -477,13 +254,13 @@ fn parse_line(tokens: &[ParserToken], ctx: ParseLineContext) -> ParseResult<Pars
 
     // labels and instructions
     let first = stream.next_non_whitespace_or_err()?;
-    let ParserToken::Token(first) = first else {
+    let Token::Token(first) = first else {
         return Err(ParseError::UnexpectedToken(format!("Expected an label (starts with underscore(_)) or an instruction at the start of a new line, found {first:?}")).to_error(stream.cur));
     };
 
     // label
-    if let Some(ParserToken::Colon) = stream.peek() {
-        if first.len() < 2 || !first.starts_with(token::ATOM_UNDERLINE) {
+    if let Some(Token::Colon) = stream.peek() {
+        if first.len() < 2 || !first.starts_with(tokenizer::ATOM_UNDERLINE) {
             return Err(ParseError::InvalidLabel(first).to_error(stream.cur));
         }
 
@@ -503,7 +280,7 @@ fn parse_line(tokens: &[ParserToken], ctx: ParseLineContext) -> ParseResult<Pars
         }));
     }
 
-    stream.expect(ParserToken::Whitespace)?;
+    stream.expect(Token::Whitespace)?;
     let operands = parse_arguments(&mut stream, false)?;
 
     Ok(ParsedLine::Instruction(SemanticInstruction {
@@ -521,37 +298,37 @@ fn parse_binding_values(stream: &mut TokenStream) -> ParseResult<Vec<SemanticLit
     while stream.has_more() {
         let next = stream.next_non_whitespace_or_err()?;
         match next {
-            ParserToken::Separator => {
+            Token::Separator => {
                 // next value
                 stream.skip_whitespace();
             }
-            ParserToken::IntLiteral(n) => {
+            Token::IntLiteral(n) => {
                 if byte_mode {
                     ret.push(SemanticLiteral::Byte(n as u8));
                 } else {
                     ret.push(SemanticLiteral::QWord(n as u64));
                 }
             }
-            ParserToken::FloatLiteral(n) => {
+            Token::FloatLiteral(n) => {
                 ret.push(SemanticLiteral::Double(n));
             }
-            ParserToken::QuotedString(s) => {
+            Token::QuotedString(s) => {
                 byte_mode = true;
                 ret.push(SemanticLiteral::String(s));
             }
-            ParserToken::Token(s) => {
+            Token::Token(s) => {
                 // try parse data type
                 if let Ok(dt) = s.parse::<DataType>() {
                     let next = stream.next_non_whitespace_or_err()?;
                     match next {
-                        ParserToken::IntLiteral(n) => {
+                        Token::IntLiteral(n) => {
                             if dt.is_floating_point() {
                                 ret.push(dt.as_float_literal(n as f64)?);
                             } else {
                                 ret.push(dt.as_int_literal(n)?);
                             }
                         }
-                        ParserToken::FloatLiteral(n) => {
+                        Token::FloatLiteral(n) => {
                             ret.push(dt.as_float_literal(n)?);
                         }
                         _ => {
@@ -585,26 +362,26 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
         while stream.has_more() {
             let next = stream.next_non_whitespace_or_err()?;
             match next {
-                ParserToken::Separator => {
+                Token::Separator => {
                     let operand = builder.build()?;
                     operands.push(operand);
                     builder = SemanticArgBuilder::default();
                 }
-                ParserToken::Deref => {
+                Token::Deref => {
                     if builder.deref.is_some() {
                         return Err(ParseError::UnexpectedToken("Unexpected dereference after another dereference".to_string()).to_error(stream.cur));
                     }
 
                     builder.deref = Some(SemanticDerefKind::Deref);
                 }
-                ParserToken::Hashtag => {
+                Token::Hashtag => {
                     if builder.deref.is_some() {
                         return Err(ParseError::UnexpectedToken("Unexpected dereference after another dereference".to_string()).to_error(stream.cur));
                     }
 
                     builder.deref = Some(SemanticDerefKind::Const);
                 }
-                ParserToken::Token(token) => {
+                Token::Token(token) => {
                     // mnenonic as operand
                     if allow_mnemonic_as_operand {
                         if let Ok(mnemonic) = OpcodeMnemonic::from_str(&token) {
@@ -626,7 +403,7 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                     if let Ok(dt) = DataType::from_str(&token) {
                         let next = stream.next_non_whitespace_or_err()?;
                         match next {
-                            ParserToken::IntLiteral(n) => {
+                            Token::IntLiteral(n) => {
                                 if dt.is_floating_point() {
                                     let sem_literal = dt.as_float_literal(n as f64)?;
                                     builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
@@ -635,7 +412,7 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                                     builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
                                 }
                             }
-                            ParserToken::FloatLiteral(n) => {
+                            Token::FloatLiteral(n) => {
                                 builder.body = Some(SemanticArgBody::Literal(dt.as_float_literal(n)?.into()));
                             }
                             _ => {
@@ -648,16 +425,29 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                         continue;
                     }
 
+                    // 3. Check if is a label
+                    if token.starts_with(tokenizer::ATOM_UNDERLINE) {
+                        let label_name = &token[1..];
+                        if label_name.is_empty() {
+                            return Err(ParseError::InvalidLabel(token).to_error(stream.cur));
+                        }
+
+                        let symbol = parse_semantic_symbol(label_name, stream)?;
+                        builder.body = Some(SemanticArgBody::Label(symbol));
+                        builder.offset = parse_token_offset(stream)?;
+                        continue;
+                    }
+
                     // label
                     let symbol = parse_semantic_symbol(&token, stream)?;
                     builder.body = Some(SemanticArgBody::Binding(symbol));
                     builder.offset = parse_token_offset(stream)?;
                 }
-                ParserToken::IntLiteral(n) => {
+                Token::IntLiteral(n) => {
                     let sem_literal = DataType::Dword.as_int_literal(n)?;
                     builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
                 }
-                ParserToken::FloatLiteral(n) => {
+                Token::FloatLiteral(n) => {
                     let sem_literal = DataType::Float.as_float_literal(n)?;
                     builder.body = Some(SemanticArgBody::Literal(sem_literal.into()));
                 }
@@ -677,11 +467,11 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
 /// 
 /// This function assumes that the binding or register prior to the offset has already been parsed, and that the next token in the stream is either an `Offset` token or the end of line.
 fn parse_token_offset(stream: &mut TokenStream) -> ParseResult<i64> {
-    return if let Some(ParserToken::Offset) = stream.peek_non_whitespace() {
+    return if let Some(Token::Offset) = stream.peek_non_whitespace() {
         stream.next_non_whitespace_or_err()?;
         let offset_token = stream.next_non_whitespace_or_err()?;
         match offset_token {
-            ParserToken::IntLiteral(n) => {
+            Token::IntLiteral(n) => {
                 Ok(n)
             }
             _ => {
@@ -696,10 +486,10 @@ fn parse_token_offset(stream: &mut TokenStream) -> ParseResult<i64> {
 
 /// Parses a semantic symbol in the form of `namespace::name` or just `name` from a [`TokenStream`]. If no namespace is specified, the `namespace` field of the returned `SemanticSymbol` will be `None`.
 fn parse_semantic_symbol(first: &str, stream: &mut TokenStream) -> ParseResult<SemanticSymbol> {
-    if let Some(ParserToken::NamespaceSeparator) = stream.peek_non_whitespace() {
+    if let Some(Token::NamespaceSeparator) = stream.peek_non_whitespace() {
         stream.next_non_whitespace_or_err()?;
         let second = stream.next_non_whitespace_or_err()?;
-        let ParserToken::Token(second) = second else {
+        let Token::Token(second) = second else {
             return Err(ParseError::UnexpectedToken(format!("Expected a label or binding name after namespace separator, found {second:?}")).to_error(stream.cur));
         };
 
@@ -713,41 +503,5 @@ fn parse_semantic_symbol(first: &str, stream: &mut TokenStream) -> ParseResult<S
             name: first.to_string(),
             namespace: None,
         })
-    }
-}
-
-mod test {
-    use crate::parser;
-    use crate::parser::{ParseLineContext, ParserToken};
-    const TEST_SCRIPT: &str = include_str!("test/test_script.f750");
-
-    #[test]
-    fn test_parse() {
-        let source: Vec<&str> = TEST_SCRIPT.lines().collect();
-        let res = parser::parse_source(&source);
-        if let Err(e) = res {
-            panic!("Parsing failed: {e}");
-        }
-    }
-
-    #[test]
-    fn test_tokenize() {
-        let res = parser::tokenize_line("const String: \"Hello, World!\", 0, float 69.420, dword 5, qword -999 ; This is a comment");
-        if let Err(e) = res {
-            panic!("Tokenization failed: {:?}", e);
-        }
-
-        println!("Tokens: {:?}", res.unwrap());
-    }
-
-    #[test]
-    fn test_parse_binding_def() {
-        let tokens = parser::tokenize_line("const SomeVariable: 67676767, dword 721, float 69.420, \"Hello, World!\", 0").unwrap();
-        let res = crate::parser::parse_line(&tokens, ParseLineContext::BindingDef);
-        if let Err(e) = res {
-            panic!("Parsing failed: {:?}", e);
-        }
-
-        println!("Parsed line: {:?}", res.unwrap());
     }
 }
