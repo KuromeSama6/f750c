@@ -95,14 +95,50 @@ pub enum OpcodeMnemonic {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
 pub enum Register {
-    Ax = 0x01,
-    Bx = 0x02,
-    Cx = 0x03,
-    Dx = 0x04,
-    Sp = 0x05,
-    Bp = 0x06,
-    Si = 0x07,
-    Di = 0x08,
+    #[strum(serialize = "a")]
+    A = 0x01,
+    #[strum(serialize = "b")]
+    B = 0x02,
+    #[strum(serialize = "c")]
+    C = 0x03,
+    #[strum(serialize = "d")]
+    D = 0x04,
+    #[strum(serialize = "sp")]
+    StackPointer = 0x05,
+    #[strum(serialize = "bp")]
+    BasePointer = 0x06,
+    #[strum(serialize = "si")]
+    SourceIndex = 0x07,
+    #[strum(serialize = "di")]
+    DestinationIndex = 0x08,
+    #[strum(serialize = "ip")]
+    InstructionPointer = 0x09,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
+pub enum CompilerConstruct {
+    #[strum(serialize = "if")]
+    If,
+    #[strum(serialize = "else")]
+    Else,
+    #[strum(serialize = "elseif")]
+    ElseIf,
+    #[strum(serialize = "fi")]
+    EndIf,
+    #[strum(serialize = "inline_loop")]
+    InlineLoop,
+    #[strum(serialize = "loop")]
+    Loop,
+    #[strum(serialize = "while")]
+    While,
+    #[strum(serialize = "for")]
+    For,
+    #[strum(serialize = "break")]
+    LoopBreak,
+    #[strum(serialize = "continue")]
+    LoopContinue,
+    #[strum(serialize = "endloop")]
+    EndLoop,
 }
