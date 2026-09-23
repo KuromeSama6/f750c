@@ -23,7 +23,7 @@ pub const ATOM_UNDERLINE: char = '_';
 pub const ATOM_PLUS: char = '+';
 /// Denotes memory dereference.
 pub const ATOM_DEREF: char = '&';
-/// Denotes either a constant dereference, or the beginning of a compiler directive.
+/// Denotes either an engine parameter reference, or the beginning of a compiler directive.
 pub const ATOM_HASHTAG: char = '#';
 /// Denotes the beginning of a compiler construct.
 pub const ATOM_AT: char = '@';

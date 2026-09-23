@@ -16,7 +16,7 @@ _start:
     mov &foo, a32
     mov a64, _start
 
-    mov &bp64+4, magic
+    mov &sp64, magic
 
     mov a64, #EngCall.Character.Random.FloatRange
     push float -0.5

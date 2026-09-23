@@ -159,4 +159,19 @@ pub enum CompilerConstruct {
     LoopContinue,
     #[strum(serialize = "endloop")]
     EndLoop,
+    #[strum(serialize = "pry")]
+    Pry,
+    #[strum(serialize = "getarg")]
+    GetArg,
+    #[strum(serialize = "engcall")]
+    EngineCall,
+}
+
+/// Represents all compiler directives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
+pub enum CompilerDirective {
+    #[strum(serialize = "use")]
+    Use,
+    #[strum(serialize = "namespace")]
+    Namespace,
 }

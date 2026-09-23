@@ -7,7 +7,7 @@ use std::fmt::Display;
 use std::str::FromStr;
 use log::{debug, trace};
 use thiserror::Error;
-use crate::semantic::{SemanticOperand, SemanticArgBody, SemanticBindingDef, SemanticInstruction, SemanticDerefKind, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral};
+use crate::semantic::{SemanticRepr, SemanticOperand, SemanticArgBody, SemanticBindingDef, SemanticInstruction, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral};
 use crate::{semantic, tokenizer, util};
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
 use crate::tokenizer::{Token, TokenStream, TokenizedLine};
@@ -56,10 +56,6 @@ pub enum ParseError {
     #[error("Invalid register spec: {0}")]
     InvalidRegisterSpec(#[from] RegisterSpecError),
 
-    #[error("Constant register dereference (#register) is not allowed")]
-    ConstantRegisterDerefNotAllowed,
-    #[error("Constant literal dereference (#literal) is not allowed")]
-    ConstantLiteralDerefNotAllowed,
     #[error("Literal offset is not allowed")]
     LiteralOffsetNotAllowed,
     #[error("Memory offset on a non-dereferenced register or binding is not allowed")]
@@ -86,26 +82,11 @@ pub enum ParseLineContext {
     BindingDef,
 }
 
-/// Semantic representation of a parsed line in the F750 source code.
-#[derive(Debug)]
-pub enum ParsedLine {
-    /// Represents the start of a special section, such as `.data`.
-    SpecialSection(String),
-    /// Represents a binding definition.
-    BindingDef(SemanticBindingDef),
-    /// Represents a label.
-    Label(String),
-    /// Represents an instruction.
-    Instruction(SemanticInstruction),
-    /// Represents a compiler construct.
-    CompilerConstruct(SemanticCompilerConstruct),
-}
-
 /// Stores properties of a semantic argument during parsing, which are used to construct a [`SemanticOperand`]. This structure is used to accumulate properties of an argument as it is being parsed, and then build the final `SemanticOperand` once all properties have been collected.
 #[derive(Debug, Default)]
 struct SemanticArgBuilder {
     body: Option<SemanticArgBody>,
-    deref: Option<SemanticDerefKind>,
+    deref: bool,
     offset: i64,
 }
 
@@ -115,23 +96,13 @@ impl SemanticArgBuilder {
             return Err(ParseError::UnexpectedToken("Expected an operand, found none".to_string()));
         };
 
-        // disallow const deref of constant register
-        if matches!(body, SemanticArgBody::Register(_)) && self.deref == Some(SemanticDerefKind::Const) {
-            return Err(ParseError::ConstantRegisterDerefNotAllowed);
-        }
-
-        // disallow const deref of constant literal
-        if matches!(body, SemanticArgBody::Literal(_)) && self.deref == Some(SemanticDerefKind::Const) {
-            return Err(ParseError::ConstantLiteralDerefNotAllowed);
-        }
-
         // disallow literal offset
         if matches!(body, SemanticArgBody::Literal(_)) && self.offset != 0 {
             return Err(ParseError::LiteralOffsetNotAllowed);
         }
 
         // disallow offset on non-dereferenced register or binding
-        if matches!(self.deref, None) && self.offset != 0 {
+        if !self.deref && self.offset != 0 {
             return Err(ParseError::NonDerefOffsetNotAllowed);
         }
 
@@ -143,10 +114,10 @@ impl SemanticArgBuilder {
     }
 }
 
-/// Parses a source file into a vector of `ParsedLine`s, which represent the semantic structure of the source code. 
+/// Parses a source file into a vector of `SemanticRepr`s, which represent the semantic structure of the source code. 
 /// 
 /// This function first tokenizes each line of the source file, and then parses the tokens into semantic representations.
-pub fn parse_source(source: &[TokenizedLine]) -> ParseResult<Vec<ParsedLine>> {
+pub fn parse_source(source: &[TokenizedLine]) -> ParseResult<Vec<SemanticRepr>> {
     let mut ctx = ParseLineContext::None;
     let mut ret = Vec::new();
 
@@ -157,11 +128,11 @@ pub fn parse_source(source: &[TokenizedLine]) -> ParseResult<Vec<ParsedLine>> {
         let parsed_line = res?;
         debug!("{:?}", parsed_line);
 
-        if ctx == ParseLineContext::BindingDef && !matches!(parsed_line, ParsedLine::BindingDef(_)) {
+        if ctx == ParseLineContext::BindingDef && !matches!(parsed_line, SemanticRepr::BindingDef(_)) {
             ctx = ParseLineContext::None;
         }
 
-        if ctx == ParseLineContext::None && let ParsedLine::SpecialSection(s) = &parsed_line && s == tokenizer::SPECIAL_SECTION_LABEL_DATA {
+        if ctx == ParseLineContext::None && let SemanticRepr::SpecialSection(s) = &parsed_line && s == tokenizer::SPECIAL_SECTION_LABEL_DATA {
             ctx = ParseLineContext::BindingDef;
         }
         ret.push(parsed_line);
@@ -170,8 +141,8 @@ pub fn parse_source(source: &[TokenizedLine]) -> ParseResult<Vec<ParsedLine>> {
     Ok(ret)
 }
 
-/// Parses a line of tokens into a `ParsedLine`, which represents the semantic structure of the line. The parsing behavior may vary depending on the context in which the line is being parsed (e.g., whether it is in a binding definition context).
-fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine> {
+/// Parses a line of tokens into a `SemanticRepr`, which represents the semantic structure of the line. The parsing behavior may vary depending on the context in which the line is being parsed (e.g., whether it is in a binding definition context).
+fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRepr> {
     let mut stream = TokenStream::new(tokens);
 
     // special section
@@ -182,7 +153,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine
         };
 
         stream.expect(Token::Colon)?;
-        return Ok(ParsedLine::SpecialSection(s));
+        return Ok(SemanticRepr::SpecialSection(s));
     }
 
     let is_label = tokens.len() == 2 && matches!(tokens[1], Token::Colon);
@@ -223,7 +194,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine
             values,
         };
 
-        return Ok(ParsedLine::BindingDef(ret));
+        return Ok(SemanticRepr::BindingDef(ret));
     }
 
     // compiler construct
@@ -238,16 +209,16 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine
             .map_err(|_| ParseError::UnexpectedToken(format!("Unknown compiler construct: {}", construct_name)).to_error(stream.cur))?;
 
         if !stream.has_more() {
-            return Ok(ParsedLine::CompilerConstruct(SemanticCompilerConstruct {
-                construct,
+            return Ok(SemanticRepr::CompilerConstruct(SemanticCompilerConstruct {
+                opcode: construct,
                 operands: Vec::new(),
             }));
         }
 
         let operands = parse_arguments(&mut stream, true)?;
 
-        return Ok(ParsedLine::CompilerConstruct(SemanticCompilerConstruct {
-            construct,
+        return Ok(SemanticRepr::CompilerConstruct(SemanticCompilerConstruct {
+            opcode: construct,
             operands,
         }));
     }
@@ -264,7 +235,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine
             return Err(ParseError::InvalidLabel(first).to_error(stream.cur));
         }
 
-        return Ok(ParsedLine::Label(first[1..].to_string()));
+        return Ok(SemanticRepr::Label(first[1..].to_string()));
     }
 
     // instruction
@@ -274,7 +245,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine
     };
 
     if !stream.has_more() {
-        return Ok(ParsedLine::Instruction(SemanticInstruction {
+        return Ok(SemanticRepr::Instruction(SemanticInstruction {
             opcode: instruction,
             operands: Vec::new(),
         }));
@@ -283,7 +254,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<ParsedLine
     stream.expect(Token::Whitespace)?;
     let operands = parse_arguments(&mut stream, false)?;
 
-    Ok(ParsedLine::Instruction(SemanticInstruction {
+    Ok(SemanticRepr::Instruction(SemanticInstruction {
         opcode: instruction,
         operands,
     }))
@@ -368,18 +339,20 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                     builder = SemanticArgBuilder::default();
                 }
                 Token::Deref => {
-                    if builder.deref.is_some() {
+                    if builder.deref {
                         return Err(ParseError::UnexpectedToken("Unexpected dereference after another dereference".to_string()).to_error(stream.cur));
                     }
 
-                    builder.deref = Some(SemanticDerefKind::Deref);
+                    builder.deref = true;
                 }
                 Token::Hashtag => {
-                    if builder.deref.is_some() {
-                        return Err(ParseError::UnexpectedToken("Unexpected dereference after another dereference".to_string()).to_error(stream.cur));
-                    }
+                    // engine parameter
+                    let next = stream.next_non_whitespace_or_err()?;
+                    let Token::Token(param_name) = next else {
+                        return Err(ParseError::UnexpectedToken(format!("Expected an engine parameter name after '#', found {next:?}")).to_error(stream.cur));
+                    };
 
-                    builder.deref = Some(SemanticDerefKind::Const);
+                    builder.body = Some(SemanticArgBody::EngineParam(param_name));
                 }
                 Token::Token(token) => {
                     // mnenonic as operand

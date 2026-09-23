@@ -5,6 +5,21 @@ use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
 use crate::parser::{ParseError, ParseResult};
 use crate::value::{DataType, DataTypeLiteral, RegisterSpec};
 
+/// Semantic representation of a parsed line in the F750 source code.
+#[derive(Debug, Clone)]
+pub enum SemanticRepr {
+    /// Represents the start of a special section, such as `.data`.
+    SpecialSection(String),
+    /// Represents a binding definition.
+    BindingDef(SemanticBindingDef),
+    /// Represents a label.
+    Label(String),
+    /// Represents an instruction.
+    Instruction(SemanticInstruction),
+    /// Represents a compiler construct.
+    CompilerConstruct(SemanticCompilerConstruct),
+}
+
 /// Represents the semantic definition of a binding.
 #[derive(Debug, Clone)]
 pub struct SemanticBindingDef {
@@ -42,7 +57,7 @@ pub struct SemanticInstruction {
 /// Represents a semantic compiler construct, which consists of a compiler construct and a list of operands.
 #[derive(Debug, Clone)]
 pub struct SemanticCompilerConstruct {
-    pub construct: CompilerConstruct,
+    pub opcode: CompilerConstruct,
     pub operands: Vec<SemanticOperand>,
 }
 
@@ -51,8 +66,8 @@ pub struct SemanticCompilerConstruct {
 pub struct SemanticOperand {
     /// The body of the operand.
     pub body: SemanticArgBody,
-    /// The kind of dereference applied to this operand, if any.
-    pub deref: Option<SemanticDerefKind>,
+    /// Whether this operand is dereferenced.
+    pub deref: bool,
     /// The memory offset applied to this operand, or zero if no offset is specified.
     pub offset: i64,
 }
@@ -68,17 +83,10 @@ pub enum SemanticArgBody {
     Label(SemanticSymbol),
     /// Represents a binding.
     Binding(SemanticSymbol),
+    /// Represents an engine parameter.
+    EngineParam(String),
     /// Represents an opcode mnemonic. This is only allowed in operands of a compiler construct.
     Mnemonic(OpcodeMnemonic),
-}
-
-/// Represents the possible kinds of dereference that can be applied to an operand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SemanticDerefKind {
-    /// Represents dereferencing of a memory address (i.e. `&register`, `&binding`, etc.).
-    Deref,
-    /// Represents dereferencing of a constant value (i.e. `#const_binding`, `#engine_enum`, etc.). Constant dereferences may be optimized and inlined by the compiler at compile time.
-    Const,
 }
 
 /// Represents a semantic symbol, which consists of a name and an optional namespace. Semantic symbols are used to represent the name of labels and bindings.
@@ -86,4 +94,31 @@ pub enum SemanticDerefKind {
 pub struct SemanticSymbol {
     pub name: String,
     pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SemanticReprStream {
+    lines: Vec<SemanticRepr>,
+    cur: usize,
+}
+
+impl SemanticReprStream {
+    pub fn from(lines: &[SemanticRepr]) -> Self {
+        Self {
+            lines: lines.to_vec(),
+            cur: 0,
+        }
+    }
+
+    pub fn into_inner(self) -> Vec<SemanticRepr> {
+        self.lines
+    }
+
+    pub fn has_more(&self) -> bool {
+        self.cur < self.lines.len()
+    }
+
+    pub fn peek(&self) -> Option<&SemanticRepr> {
+        self.lines.get(self.cur)
+    }
 }
