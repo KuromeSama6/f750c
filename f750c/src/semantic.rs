@@ -2,7 +2,7 @@
 
 use std::fmt::{Display, Formatter};
 use bitfield_struct::bitfield;
-use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
+use crate::opcode::{CompilerConstruct, OpcodeMnemonic, Register};
 use crate::parser::{ParseError, ParseResult};
 use crate::value::{DataType, DataTypeLiteral, RegisterSpec};
 
@@ -138,111 +138,90 @@ impl Display for SemanticCompilerConstruct {
     }
 }
 
-/// Represents a semantic operand, which consists of an argument body, as well as additional properties.
+
+/// Represents a semantic operand.
 #[derive(Debug, Clone)]
-pub struct SemanticOperand {
-    /// The body of the operand.
-    pub kind: SemanticOperandKind,
-    /// Whether this operand is dereferenced.
-    pub deref: Option<SemanticDerefType>,
-    /// The memory offset applied to this operand, or zero if no offset is specified.
-    pub offset: i64,
-}
-
-impl SemanticOperand {
-    pub fn with_body(body: SemanticOperandKind) -> Self {
-        Self {
-            kind: body,
-            deref: None,
-            offset: 0,
-        }
-    }
-
-    pub fn is_flat(&self) -> bool {
-        self.deref.is_none() && self.offset == 0
-    }
-
-    pub fn has_offset(&self) -> bool {
-        self.offset != 0
-    }
-
-    pub fn is_deref(&self) -> bool {
-        self.deref.is_some()
-    }
-
-    pub fn is_dynamic_deref(&self) -> bool {
-        matches!(self.deref, Some(SemanticDerefType::Dynamic))
-    }
-
-    pub fn is_const_deref(&self) -> bool {
-        matches!(self.deref, Some(SemanticDerefType::Const))
-    }
-
-    pub fn is_register(&self) -> bool {
-        matches!(self.kind, SemanticOperandKind::Register(_))
-    }
-
-    pub fn is_immediate(&self) -> bool {
-        match self.kind {
-            SemanticOperandKind::Literal(_) if self.is_flat() => true,
-            SemanticOperandKind::Binding(_) if self.is_const_deref() => true,
-            _ => false,
-        }
-    }
+pub enum SemanticOperand {
+    /// Represents a value that is able to be inlined by the compiler, such as a literal, a label (which will be resolved to an address), or a constant binding (which will be resolved to its value).
+    Immediate(SemanticImmediateType),
+    /// Represents a register family and its width, without dereferencing.
+    Register(RegisterSpec),
+    /// Represents a dereference (access) of memory.
+    Deref(SemanticDeref),
+    /// Represents an engine parameter.
+    EngineParam(String),
+    /// Represents an opcode mnemonic. Only allowed in compiler constructs.
+    Mnemonic(OpcodeMnemonic),
 }
 
 impl Display for SemanticOperand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match &self.deref {
-            Some(SemanticDerefType::Dynamic) => write!(f, "&")?,
-            Some(SemanticDerefType::Const) => write!(f, "&const ")?,
-            None => {}
+        match self {
+            SemanticOperand::Immediate(imm) => write!(f, "{}", imm),
+            SemanticOperand::Register(reg) => write!(f, "{}", reg),
+            SemanticOperand::Deref(deref) => write!(f, "{}", deref),
+            SemanticOperand::EngineParam(param) => write!(f, "@{}", param),
+            SemanticOperand::Mnemonic(mnemonic) => write!(f, "{}", mnemonic.as_ref()),
         }
-
-        write!(f, "{}", self.kind)?;
-
-        if self.offset > 0 {
-            write!(f, "+{}", self.offset)?;
-        } else if self.offset < 0 {
-            write!(f, "+ {}", self.offset)?;
-        }
-
-        Ok(())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SemanticDerefType {
-    Dynamic,
-    Const,
-}
-
-/// Represents the body of a semantic argument.
 #[derive(Debug, Clone)]
-pub enum SemanticOperandKind {
-    /// Represents a literal value.
-    Literal(DataTypeLiteral),
-    /// Represents a specific register.
-    Register(RegisterSpec),
-    /// Represents a label.
+pub enum SemanticImmediateType {
+    /// Represents a flat literal value (i.e. '42', '0.5', etc.).
+    Literal(SemanticLiteral),
+    /// Represents a label (i.e. '_start', '_proc', etc.) that will be resolved to an address at compile time.
     Label(SemanticSymbol),
-    /// Represents a binding.
-    Binding(SemanticSymbol),
-    /// Represents an engine parameter.
-    EngineParam(String),
-    /// Represents an opcode mnemonic. This is only allowed in operands of a compiler construct.
-    Mnemonic(OpcodeMnemonic),
+    /// Represents a constant binding (i.e. '&const MyBinding') that will be inlined to its value at compile time.
+    ConstBinding(SemanticSymbol),
 }
 
-impl Display for SemanticOperandKind {
+impl Display for SemanticImmediateType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            SemanticOperandKind::Literal(lit) => write!(f, "{}", lit.value_string()),
-            SemanticOperandKind::Register(reg) => write!(f, "{reg}"),
-            SemanticOperandKind::Label(sym) => write!(f, "_{sym}"),
-            SemanticOperandKind::Binding(sym) => write!(f, "{sym}"),
-            SemanticOperandKind::EngineParam(param) => write!(f, "#{param}"),
-            SemanticOperandKind::Mnemonic(mnemonic) => write!(f, "{}", mnemonic.as_ref()),
+            SemanticImmediateType::Literal(lit) => write!(f, "{}", lit),
+            SemanticImmediateType::Label(label) => write!(f, "_{}", label),
+            SemanticImmediateType::ConstBinding(binding) => write!(f, "&const {}", binding),
+        }
+    }
+}
+
+/// Represents a dereference (access) of memory.
+#[derive(Debug, Clone)]
+pub struct SemanticDeref {
+    pub kind: SemanticDerefKind,
+    pub offset: i64,
+}
+
+impl Display for SemanticDeref {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.offset == 0 {
+            write!(f, "{}", self.kind)
+        } else if self.offset > 0 {
+            write!(f, "{}+{}", self.kind, self.offset)
+        } else {
+            write!(f, "{} + -{}", self.kind, -self.offset)
+        }
+    }
+}
+
+/// Represents the kind of dereference (access) of memory.
+#[derive(Debug, Clone)]
+pub enum SemanticDerefKind {
+    /// The access of memory located at the address represented by a variable binding (i.e. `&myBinding`).
+    Binding(SemanticSymbol),
+    /// The access of memory located at the address represented by the value of a register (i.e. `&sp64`).
+    Register(RegisterSpec),
+    /// The access of memory located at a flat address (i.e. `&0x12345678`).
+    Address(u64),
+}
+
+impl Display for SemanticDerefKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SemanticDerefKind::Binding(binding) => write!(f, "&{}", binding),
+            SemanticDerefKind::Register(reg) => write!(f, "&{}", reg),
+            SemanticDerefKind::Address(addr) => write!(f, "&0x{:X}", addr),
         }
     }
 }
