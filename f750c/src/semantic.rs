@@ -187,7 +187,7 @@ impl Display for SemanticOperand {
             SemanticOperand::Immediate(imm) => write!(f, "{}", imm),
             SemanticOperand::Register(reg) => write!(f, "{}", reg),
             SemanticOperand::Deref(deref) => write!(f, "{}", deref),
-            SemanticOperand::EngineParam(param) => write!(f, "@{}", param),
+            SemanticOperand::EngineParam(param) => write!(f, "#{}", param),
             SemanticOperand::Mnemonic(mnemonic) => write!(f, "{}", mnemonic.as_ref()),
         }
     }

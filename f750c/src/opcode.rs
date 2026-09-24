@@ -17,11 +17,35 @@ pub enum Opcode {
     StackFree = 0x08,
 
     // Move
-    MovRegImm = 0xa0,
-    MovRegMem = 0xa1,
-    MovMemImm = 0xa2,
-    MovMemReg = 0xa3,
-    MovRegReg = 0xa4,
+    MovRegImm = 0x20,
+    MovRegMem = 0x21,
+    MovMemImm = 0x22,
+    MovMemReg = 0x23,
+    MovRegReg = 0x24,
+    MovRegEngineParam = 0x25,
+    MovEngineParamReg = 0x26,
+
+    // Comparison
+    CmpRegReg = 0x30,
+    CmpRegImm = 0x31,
+
+    // Arithmetic
+    AddRegReg = 0x40,
+    AddRegImm = 0x41,
+    SubRegReg = 0x42,
+    SubRegImm = 0x43,
+    MulRegReg = 0x44,
+    MulRegImm = 0x45,
+    DivRegReg = 0x46,
+    DivRegImm = 0x47,
+    ModRegReg = 0x48,
+    ModRegImm = 0x49,
+
+    // Stack,
+    PushReg = 0x50,
+    PushImm = 0x51,
+    PopReg = 0x52,
+    PopMem = 0x53,
 
     // Jump
     Jmp = 0xb0,
@@ -33,28 +57,14 @@ pub enum Opcode {
     JmpIfNotOverflow = 0xb6,
     JmpIfCarry = 0xb7,
     JmpIfNotCarry = 0xb8,
-
-    // Comparison
-    CmpRegReg = 0xc0,
-    CmpRegImm = 0xc1,
-
-    // Arithmetic
-    AddRegReg = 0xd0,
-    AddRegImm = 0xd1,
-    SubRegReg = 0xd2,
-    SubRegImm = 0xd3,
-    MulRegReg = 0xd4,
-    MulRegImm = 0xd5,
-    DivRegReg = 0xd6,
-    DivRegImm = 0xd7,
-    ModRegReg = 0xd8,
-    ModRegImm = 0xd9,
-
-    // Stack,
-    PushReg = 0xe0,
-    PushImm = 0xe1,
-    PopReg = 0xe2,
-    PopMem = 0xe3,
+    JmpIfParity = 0xb9,
+    JmpIfNotParity = 0xba,
+    JmpIfBelowEqual = 0xbb,
+    JmpIfAbove = 0xbc,
+    JmpIfLess = 0xbd,
+    JmpIfGreaterEqual = 0xbe,
+    JmpIfLessEqual = 0xbf,
+    JmpIfGreater = 0xc0,
 }
 
 /// Represents the mnemonics for the F750 virtual machine opcodes.
@@ -77,21 +87,57 @@ pub enum OpcodeMnemonic {
     #[strum(serialize = "jmp")]
     Jmp,
     #[strum(serialize = "jz")]
-    Jz,
+    JmpIfZero,
     #[strum(serialize = "jnz")]
-    Jnz,
+    JmpIfNotZero,
     #[strum(serialize = "js")]
-    Js,
+    JmpIfSign,
     #[strum(serialize = "jns")]
-    Jns,
+    JmpIfNotSign,
     #[strum(serialize = "jo")]
-    Jo,
+    JmpIfOverflow,
     #[strum(serialize = "jno")]
-    Jno,
+    JmpIfNotOverflow,
     #[strum(serialize = "jc")]
-    Jc,
+    JmpIfCarry,
+    #[strum(serialize = "jb")]
+    JmpIfBelow,
+    #[strum(serialize = "jnae")]
+    JmpIfNotAboveEqual,
     #[strum(serialize = "jnc")]
-    Jnc,
+    JmpIfNotCarry,
+    #[strum(serialize = "jae")]
+    JmpIfAboveEqual,
+    #[strum(serialize = "jnb")]
+    JmpIfNotBelow,
+    #[strum(serialize = "jp")]
+    JmpIfParity,
+    #[strum(serialize = "jnp")]
+    JmpIfNotParity,
+    #[strum(serialize = "jbe")]
+    JmpIfBelowEqual,
+    #[strum(serialize = "jna")]
+    JmpIfNotAbove,
+    #[strum(serialize = "ja")]
+    JmpIfAbove,
+    #[strum(serialize = "jnbe")]
+    JmpIfNotBelowEqual,
+    #[strum(serialize = "jl")]
+    JmpIfLess,
+    #[strum(serialize = "jnle")]
+    JmpIfNotGreaterEqual,
+    #[strum(serialize = "jge")]
+    JmpIfGreaterEqual,
+    #[strum(serialize = "jnl")]
+    JmpIfNotLess,
+    #[strum(serialize = "jle")]
+    JmpIfLessEqual,
+    #[strum(serialize = "jng")]
+    JmpIfNotGreater,
+    #[strum(serialize = "jg")]
+    JmpIfGreater,
+    #[strum(serialize = "jnge")]
+    JmpIfNotLessEqual,
     #[strum(serialize = "cmp")]
     Cmp,
     #[strum(serialize = "add")]
