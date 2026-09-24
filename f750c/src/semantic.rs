@@ -14,7 +14,7 @@ pub enum SemanticRepr {
     /// Represents a binding definition.
     BindingDef(SemanticBindingDef),
     /// Represents a label.
-    Label(String),
+    Label(SemanticSymbol),
     /// Represents an instruction.
     Instruction(SemanticInstruction),
     /// Represents a compiler construct.
@@ -179,6 +179,10 @@ impl SemanticOperand {
     pub fn is_mnemonic(&self) -> bool {
         matches!(self, SemanticOperand::Mnemonic(_))
     }
+    
+    pub fn is_immediate_or_register(&self) -> bool {
+        self.is_immediate() || self.is_register()
+    }
 }
 
 impl Display for SemanticOperand {
@@ -271,6 +275,15 @@ impl SemanticSymbol {
             format!("{}+{}", self, offset)
         } else {
             format!("{}-{}", self, -offset)
+        }
+    }
+}
+
+impl From<String> for SemanticSymbol {
+    fn from(name: String) -> Self {
+        Self {
+            name,
+            namespace: None,
         }
     }
 }

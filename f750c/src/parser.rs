@@ -42,6 +42,8 @@ pub enum ParseError {
     UnexpectedEOL,
     #[error("Invalid label name: {0}")]
     InvalidLabel(String),
+    #[error("Label names starting with double underscore '__' are reserved for compiler use")]
+    DoubleUnderscoreLabelReserved,
     #[error("Invalid data type for literal '{0}': {1}")]
     InvalidDataTypeForLiteral(String, DataType),
 
@@ -205,7 +207,11 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRe
             return Err(ParseError::InvalidLabel(first));
         }
 
-        return Ok(SemanticRepr::Label(first[1..].to_string()));
+        let name = first[1..].to_string();
+        if name.starts_with(tokenizer::ATOM_UNDERLINE) {
+            return Err(ParseError::DoubleUnderscoreLabelReserved);
+        }
+        return Ok(SemanticRepr::Label(name.into()));
     }
 
     // instruction
@@ -219,6 +225,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRe
             opcode: instruction,
             operands: Vec::new(),
         }));
+
     }
 
     stream.expect(Token::Whitespace)?;

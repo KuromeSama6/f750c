@@ -30,6 +30,31 @@ _start:
 
     @pry DangerousConstant, &const SomeNumber
 
+    @if b64, &const DangerousConstant, je
+        mov a64, 50
+        mov b64, &foo
+        @engcall #SomeEngineCall, &const DangerousConstant, b8
+
+        @if b64, &const DangerousConstant, je
+            mov a64, 50
+            mov b64, &foo
+            @engcall #SomeEngineCall, &const DangerousConstant, b8
+        @end
+
+    @elseif c64, &const DangerousConstant, je
+        mov a64, 100
+        mov b64, &foo
+        @engcall #SomeEngineCall, &const SomeNumber, b8
+    @elseif d64, &const DangerousConstant, je
+        mov a64, 150
+        mov b64, &foo
+        @engcall #SomeEngineCall, &const SomeNumber, b8
+    @else
+        mov a64, 200
+        mov b64, &foo
+        @engcall #SomeEngineCall, &const SomeNumber, b8
+    @end
+
     push &const Arg0
     push &const Arg1
     call _proc
@@ -42,8 +67,6 @@ _proc:
     mov &sp8, a8 ; arg1
     @getarg b8, 1
     mov &sp8+1, b8 ; arg0
-
-    @engcall #SomeEngineCall, &const DangerousConstant, b8
 
     stackfree
     ret

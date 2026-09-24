@@ -90,6 +90,10 @@ pub enum OpcodeMnemonic {
     JmpIfZero,
     #[strum(serialize = "jnz")]
     JmpIfNotZero,
+    #[strum(serialize = "je")]
+    JmpIfEqual,
+    #[strum(serialize = "jne")]
+    JmpIfNotEqual,
     #[strum(serialize = "js")]
     JmpIfSign,
     #[strum(serialize = "jns")]
@@ -156,6 +160,33 @@ pub enum OpcodeMnemonic {
     Pop,
 }
 
+impl OpcodeMnemonic {
+    pub fn is_jump(&self) -> bool {
+        matches!(
+            self,
+            OpcodeMnemonic::Jmp
+                | OpcodeMnemonic::JmpIfZero
+                | OpcodeMnemonic::JmpIfNotZero
+                | OpcodeMnemonic::JmpIfEqual
+                | OpcodeMnemonic::JmpIfNotEqual
+                | OpcodeMnemonic::JmpIfSign
+                | OpcodeMnemonic::JmpIfNotSign
+                | OpcodeMnemonic::JmpIfOverflow
+                | OpcodeMnemonic::JmpIfNotOverflow
+                | OpcodeMnemonic::JmpIfCarry
+                | OpcodeMnemonic::JmpIfNotCarry
+                | OpcodeMnemonic::JmpIfParity
+                | OpcodeMnemonic::JmpIfNotParity
+                | OpcodeMnemonic::JmpIfBelowEqual
+                | OpcodeMnemonic::JmpIfAbove
+                | OpcodeMnemonic::JmpIfLess
+                | OpcodeMnemonic::JmpIfGreaterEqual
+                | OpcodeMnemonic::JmpIfLessEqual
+                | OpcodeMnemonic::JmpIfGreater
+        )
+    }
+}
+
 /// Represents all register families of the F750 virtual machine.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
@@ -187,14 +218,14 @@ pub enum Register {
 /// Represents all compiler constructs of the F750 virtual machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
 pub enum CompilerConstruct {
+    #[strum(serialize = "end")]
+    BlockEnd,
     #[strum(serialize = "if")]
     If,
     #[strum(serialize = "else")]
     Else,
     #[strum(serialize = "elseif")]
     ElseIf,
-    #[strum(serialize = "fi")]
-    EndIf,
     #[strum(serialize = "inline_loop")]
     InlineLoop,
     #[strum(serialize = "loop")]
@@ -207,14 +238,25 @@ pub enum CompilerConstruct {
     LoopBreak,
     #[strum(serialize = "continue")]
     LoopContinue,
-    #[strum(serialize = "endloop")]
-    EndLoop,
     #[strum(serialize = "pry")]
     Pry,
     #[strum(serialize = "getarg")]
     GetArg,
     #[strum(serialize = "engcall")]
     EngineCall,
+}
+
+impl CompilerConstruct {
+    pub fn is_block_start(&self) -> bool {
+        matches!(
+            self,
+            CompilerConstruct::If
+                | CompilerConstruct::InlineLoop
+                | CompilerConstruct::Loop
+                | CompilerConstruct::While
+                | CompilerConstruct::For
+        )
+    }
 }
 
 /// Represents all compiler directives.
