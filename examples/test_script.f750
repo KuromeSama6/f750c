@@ -28,7 +28,7 @@ _start:
 
     mov &bar, a64
 
-    @pry DangerousConstant, 5
+    @pry DangerousConstant, &const SomeNumber
 
     push &const Arg0
     push &const Arg1
@@ -40,8 +40,10 @@ _proc:
     stackalloc 2
     @getarg a8, 0
     mov &sp8, a8 ; arg1
-    @getarg a8, 1
-    mov &sp8+1, a8 ; arg0
+    @getarg b8, 1
+    mov &sp8+1, b8 ; arg0
+
+    @engcall #SomeEngineCall, &const DangerousConstant, b8
 
     stackfree
     ret

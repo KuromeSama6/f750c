@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use log::warn;
 use thiserror::Error;
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic, Register};
-use crate::semantic::{SemanticOperandKind, SemanticCompilerConstruct, SemanticInstruction, SemanticOperand, SemanticRepr, SemanticReprStream, SemanticDerefType};
+use crate::semantic::{SemanticCompilerConstruct, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticInstruction, SemanticOperand, SemanticRepr, SemanticReprStream};
 use crate::tokenizer;
 use crate::value::{RegisterSpec};
 
@@ -107,6 +107,7 @@ pub fn expand_construct_source(source: &[SemanticRepr]) -> Result<Vec<SemanticRe
         let result = match construct.opcode {
             CompilerConstruct::Pry => expand_construct_pry(&construct, &mut ret),
             CompilerConstruct::GetArg => expand_construct_getarg(&construct, &mut ret),
+            CompilerConstruct::EngineCall => expand_construt_engcall(&construct, &mut ret),
             _ => Err(ConstructExpansionError::ConstructNotImplemented(construct.opcode))
         };
 
@@ -125,15 +126,11 @@ fn expand_construct_pry(construct: &SemanticCompilerConstruct, out: &mut Vec<Sem
     construct.expect_exact_operands(2)?;
 
     let arg0 = &construct.operands[0];
-    let SemanticOperandKind::Binding(binding) = &arg0.kind else {
+    let SemanticOperand::Immediate(SemanticImmediateType::Binding(binding, offset)) = arg0 else {
         return construct.invalid_operand_error(0, "Expected a binding as the first operand.");
     };
 
-    if arg0.is_deref() {
-        return construct.invalid_operand_error(0, "This binding must not be dereferenced.");
-    }
-
-    if arg0.has_offset() {
+    if *offset != 0 {
         return construct.invalid_operand_error(0, "This binding must not have an offset.");
     }
 
@@ -142,22 +139,14 @@ fn expand_construct_pry(construct: &SemanticCompilerConstruct, out: &mut Vec<Sem
         return construct.invalid_operand_error(1, "Expected an immediate value or a register.");
     }
 
-    if arg1.is_register() && !arg1.is_flat() {
-        return construct.invalid_operand_error(1, "This register must not be dereferenced or have an offset.");
-    }
-
     // generate code
 
     // mov rsi, <binding>
     out.push(SemanticRepr::Instruction(SemanticInstruction {
         opcode: OpcodeMnemonic::Mov,
         operands: vec![
-            SemanticOperand::with_body(SemanticOperandKind::Register(RegisterSpec::qword(Register::SourceIndex))),
-            SemanticOperand {
-                kind: SemanticOperandKind::Binding(binding.clone()),
-                deref: Some(SemanticDerefType::Dynamic),
-                offset: 0,
-            },
+            SemanticOperand::Register(RegisterSpec::qword(Register::SourceIndex)),
+            SemanticOperand::Immediate(SemanticImmediateType::Binding(binding.clone(), 0)),
         ],
     }));
 
@@ -165,11 +154,10 @@ fn expand_construct_pry(construct: &SemanticCompilerConstruct, out: &mut Vec<Sem
     out.push(SemanticRepr::Instruction(SemanticInstruction {
         opcode: OpcodeMnemonic::Mov,
         operands: vec![
-            SemanticOperand {
-                kind: SemanticOperandKind::Register(RegisterSpec::qword(Register::SourceIndex)),
-                deref: Some(SemanticDerefType::Dynamic),
+            SemanticOperand::Deref(SemanticDeref {
+                kind: SemanticDerefKind::Register(RegisterSpec::qword(Register::SourceIndex)),
                 offset: 0,
-            },
+            }),
             arg1.clone(),
         ],
     }));
@@ -182,34 +170,29 @@ fn expand_construct_getarg(construct: &SemanticCompilerConstruct, out: &mut Vec<
     construct.expect_exact_operands(2)?;
 
     let arg0 = &construct.operands[0];
-    let SemanticOperandKind::Register(reg) = &arg0.kind else {
+    let SemanticOperand::Register(reg) = arg0 else {
         return construct.invalid_operand_error(0, "Expected a register as the first operand.");
     };
 
-    if !arg0.is_flat() {
-        return construct.invalid_operand_error(0, "This register must not be dereferenced or have an offset.");
-    }
-
     let arg1 = &construct.operands[1];
-    let SemanticOperandKind::Literal(lit) = &arg1.kind else {
+    let SemanticOperand::Immediate(SemanticImmediateType::Literal(lit)) = arg1 else {
         return construct.invalid_operand_error(1, "Expected a literal as the second operand.");
     };
 
-    if lit.data_type().is_floating_point() {
+    if lit.to_data_type().data_type().is_floating_point() {
         return construct.invalid_operand_error(1, "This literal must not be a integer value.");
     }
 
-    let offset_amount = lit.as_int().unwrap();
+    let offset_amount = lit.to_data_type().as_int().unwrap();
 
     out.push(SemanticRepr::Instruction(SemanticInstruction {
         opcode: OpcodeMnemonic::Mov,
         operands: vec![
-            SemanticOperand::with_body(SemanticOperandKind::Register(reg.clone())),
-            SemanticOperand {
-                kind: SemanticOperandKind::Register(RegisterSpec::qword(Register::BasePointer)),
-                deref: Some(SemanticDerefType::Dynamic),
+            SemanticOperand::Register(*reg),
+            SemanticOperand::Deref(SemanticDeref {
+                kind: SemanticDerefKind::Register(RegisterSpec::qword(Register::BasePointer)),
                 offset: 16 + offset_amount,
-            },
+            })
         ],
     }));
 
@@ -225,7 +208,7 @@ fn expand_construt_engcall(construct: &SemanticCompilerConstruct, out: &mut Vec<
     }
 
     let arg0 = &construct.operands[0];
-    let SemanticOperandKind::EngineParam(_) = &arg0.kind else {
+    let SemanticOperand::EngineParam(engine_param) = arg0 else {
         return construct.invalid_operand_error(0, "Expected an engine parameter as the first operand.");
     };
 
@@ -234,8 +217,11 @@ fn expand_construt_engcall(construct: &SemanticCompilerConstruct, out: &mut Vec<
         .enumerate()
         .skip(1)
     {
-        match operand.kind {
-            _ => return construct.invalid_operand_error(i, format!("For parameter {i} '{operand}': ").as_str()),
+        if matches!(operand, SemanticOperand::Immediate(_)) || matches!(operand, SemanticOperand::Register(_)) {
+            args.push(operand);
+
+        } else {
+            return construct.invalid_operand_error(i, format!("For parameter {i} '{operand}': Expected an immediate or a register.").as_str());
         }
     }
 

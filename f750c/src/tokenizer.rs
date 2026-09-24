@@ -3,6 +3,7 @@
 //! In the F750 compiler flow, each line in a source file is first tokenized into a sequence of `ParserToken`s, which are then parsed into semantic representations of the source code.
 
 use std::collections::VecDeque;
+use std::fmt::Display;
 use crate::parser::{ParseError, ParseResult};
 use crate::tokenizer;
 
@@ -56,6 +57,25 @@ pub enum Token {
     Token(String),
 }
 
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Whitespace => write!(f, " "),
+            Token::Separator => write!(f, ","),
+            Token::Colon => write!(f, ":"),
+            Token::Offset => write!(f, "+"),
+            Token::Deref => write!(f, "&"),
+            Token::Hashtag => write!(f, "#"),
+            Token::Annotation => write!(f, "@"),
+            Token::NamespaceSeparator => write!(f, "::"),
+            Token::IntLiteral(val) => write!(f, "{}", val),
+            Token::FloatLiteral(val) => write!(f, "{}", val),
+            Token::QuotedString(val) => write!(f, "\"{}\"", val),
+            Token::Token(val) => write!(f, "{}", val),
+        }
+    }
+}
+
 pub type TokenizedLine = Vec<Token>;
 
 /// Utility for managing a stream of tokens during parsing. This structure allows for peeking at the next token, consuming tokens, and checking for the end of the stream.
@@ -105,7 +125,7 @@ impl TokenStream {
     /// Consumes and returns the next token in the stream, advancing the current position. If there are no more tokens, it returns a `ParseError` indicating an unexpected end of line.
     pub fn next_or_err(&mut self) -> ParseResult<Token> {
         let cur = self.cur;
-        self.next().ok_or_else(|| ParseError::UnexpectedEOL.to_error(cur))
+        self.next().ok_or_else(|| ParseError::UnexpectedEOL)
     }
 
     /// Consumes all `Whitespace` tokens in the stream until a non-`Whitespace` token is encountered or the end of the stream is reached. Returns the next non-whitespace token, or `None` if there are no more tokens.
@@ -122,7 +142,7 @@ impl TokenStream {
     /// Consumes all `Whitespace` tokens in the stream until a non-`Whitespace` token is encountered or the end of the stream is reached. Returns the next non-whitespace token, or a `ParseError` if there are no more tokens.
     pub fn next_non_whitespace_or_err(&mut self) -> ParseResult<Token> {
         let cur = self.cur;
-        self.next_non_whitespace().ok_or_else(|| ParseError::UnexpectedEOL.to_error(cur))
+        self.next_non_whitespace().ok_or_else(|| ParseError::UnexpectedEOL)
     }
 
     /// Consumes the next token in the stream and checks if it matches the expected token. Returns `Ok(())` if it matches, or a `ParseError` if it does not.
@@ -130,7 +150,7 @@ impl TokenStream {
         let cur = self.cur;
         let token = self.next_or_err()?;
         if token != expected {
-            return Err(ParseError::UnexpectedToken(format!("Expected {:?}, found {:?}", expected, token)).to_error(cur));
+            return Err(ParseError::UnexpectedToken(format!("Expected {:?}, found {:?}", expected, token)));
         }
         Ok(())
     }
@@ -140,7 +160,7 @@ impl TokenStream {
         let cur = self.cur;
         let token = self.next_non_whitespace_or_err()?;
         if token != expected {
-            return Err(ParseError::UnexpectedToken(format!("Expected {:?}, found {:?}", expected, token)).to_error(cur));
+            return Err(ParseError::UnexpectedToken(format!("Expected {:?}, found {:?}", expected, token)));
         }
         Ok(())
     }
@@ -217,13 +237,13 @@ pub fn tokenize_line(line: &str) -> ParseResult<TokenizedLine> {
 
                     } else {
                         // Unterminated quote
-                        return Err(ParseError::UnterminatedQuote.to_error(cur));
+                        return Err(ParseError::UnterminatedQuote);
                     }
 
                 } else {
                     // Handle regular token
                     let Some(first) = line.chars().nth(cur) else {
-                        return Err(ParseError::UnexpectedEOL.to_error(cur));
+                        return Err(ParseError::UnexpectedEOL);
                     };
 
                     let is_digit = first.is_ascii_digit() || first == '-' || first == '+';

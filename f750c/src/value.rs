@@ -38,25 +38,29 @@ impl DataType {
     /// Converts an integer value to a [`SemanticLiteral`] of the appropriate type based on the [`DataType`].
     /// 
     /// This function will return an error if the data type is not an integer type (i.e., `Byte`, `Word`, `Dword`, or `Qword`).
-    pub fn as_int_literal(&self, value: i64) -> ParseResult<SemanticLiteral> {
-        match self {
-            DataType::Byte => Ok(SemanticLiteral::Byte(value as u8)),
-            DataType::Word => Ok(SemanticLiteral::Word(value as u16)),
-            DataType::Dword => Ok(SemanticLiteral::DWord(value as u32)),
-            DataType::Qword => Ok(SemanticLiteral::QWord(value as u64)),
-            _ => Err(ParseError::InvalidDataTypeForLiteral(value.to_string(), *self).to_error(0)),
-        }
+    pub fn as_int_literal_typed(&self, value: i64) -> ParseResult<SemanticLiteral> {
+        let lit = match self {
+            DataType::Byte => DataTypeLiteral::Byte(value as u8),
+            DataType::Word => DataTypeLiteral::Word(value as u16),
+            DataType::Dword => DataTypeLiteral::Dword(value as u32),
+            DataType::Qword => DataTypeLiteral::Qword(value as u64),
+            _ => return Err(ParseError::InvalidDataTypeForLiteral(value.to_string(), *self)),
+        };
+
+        Ok(SemanticLiteral::Typed(lit))
     }
-    
+
     /// Converts a floating point value to a [`SemanticLiteral`] of the appropriate type based on the [`DataType`].
-    /// 
+    ///
     /// This function will return an error if the data type is not a floating point type (i.e., `Float` or `Double`).
-    pub fn as_float_literal(&self, value: f64) -> ParseResult<SemanticLiteral> {
-        match self {
-            DataType::Float => Ok(SemanticLiteral::Float(value as f32)),
-            DataType::Double => Ok(SemanticLiteral::Double(value)),
-            _ => Err(ParseError::InvalidDataTypeForLiteral(value.to_string(), *self).to_error(0)),
-        }
+    pub fn as_float_literal_typed(&self, value: f64) -> ParseResult<SemanticLiteral> {
+        let lit = match self {
+            DataType::Float => DataTypeLiteral::Float(value as f32),
+            DataType::Double => DataTypeLiteral::Double(value),
+            _ => return Err(ParseError::InvalidDataTypeForLiteral(value.to_string(), *self)),
+        };
+
+        Ok(SemanticLiteral::Typed(lit))
     }
 
     /// Returns whether this data type is a floating point type (i.e., `Float` or `Double`).
@@ -121,12 +125,9 @@ impl DataTypeLiteral {
 impl From<SemanticLiteral> for DataTypeLiteral {
     fn from(value: SemanticLiteral) -> Self {
         match value {
-            SemanticLiteral::Byte(v) => DataTypeLiteral::Byte(v),
-            SemanticLiteral::Word(v) => DataTypeLiteral::Word(v),
-            SemanticLiteral::DWord(v) => DataTypeLiteral::Dword(v),
-            SemanticLiteral::QWord(v) => DataTypeLiteral::Qword(v),
-            SemanticLiteral::Float(v) => DataTypeLiteral::Float(v),
-            SemanticLiteral::Double(v) => DataTypeLiteral::Double(v),
+            SemanticLiteral::Typed(lit) => lit,
+            SemanticLiteral::UntypedInteger(v) => DataTypeLiteral::Qword(v as u64),
+            SemanticLiteral::UntypedFloating(v) => DataTypeLiteral::Double(v),
             _ => panic!("Cannot convert SemanticLiteral to DataTypeLiteral: {:?}", value)
         }
     }

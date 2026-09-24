@@ -24,7 +24,7 @@ pub struct CompileOptions {
 #[derive(Debug, Clone, Error)]
 pub enum Error {
     #[error("Tokenizer error at line {1}: {0}")]
-    Tokenize(ParseErrorDetails, usize),
+    Tokenize(ParseError, usize),
     #[error("Parser error: {0}")]
     Parse(#[from] ParseErrorDetails),
     #[error("Compiler construct expansion error: {0}")]

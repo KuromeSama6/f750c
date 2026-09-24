@@ -3,7 +3,7 @@
 use std::fmt::{Display, Formatter};
 use bitfield_struct::bitfield;
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic, Register};
-use crate::parser::{ParseError, ParseResult};
+use crate::util;
 use crate::value::{DataType, DataTypeLiteral, RegisterSpec};
 
 /// Semantic representation of a parsed line in the F750 source code.
@@ -70,24 +70,29 @@ impl Display for SemanticBindingDef {
 /// Note that semantic literals are different from [`DataType`]s in that they represent actual literal values written in the source code, which allows string literals to be present.
 #[derive(Debug, Clone)]
 pub enum SemanticLiteral {
-    Byte(u8),
-    Word(u16),
-    DWord(u32),
-    QWord(u64),
-    Float(f32),
-    Double(f64),
+    UntypedInteger(i64),
+    UntypedFloating(f64),
+    Typed(DataTypeLiteral),
     String(String),
+}
+
+impl SemanticLiteral {
+    pub fn to_data_type(&self) -> DataTypeLiteral {
+        match self {
+            SemanticLiteral::UntypedInteger(i) => DataTypeLiteral::Qword(*i as u64),
+            SemanticLiteral::UntypedFloating(f) => DataTypeLiteral::Double(*f),
+            SemanticLiteral::Typed(t) => *t,
+            SemanticLiteral::String(_) => panic!("Cannot convert string literal to DataType"),
+        }
+    }
 }
 
 impl Display for SemanticLiteral {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            SemanticLiteral::Byte(b) => write!(f, "{}", b),
-            SemanticLiteral::Word(w) => write!(f, "{}", w),
-            SemanticLiteral::DWord(d) => write!(f, "{}", d),
-            SemanticLiteral::QWord(q) => write!(f, "{}", q),
-            SemanticLiteral::Float(fl) => write!(f, "{}", fl),
-            SemanticLiteral::Double(dbl) => write!(f, "{}", dbl),
+            SemanticLiteral::UntypedInteger(i) => write!(f, "(qword){}", i),
+            SemanticLiteral::UntypedFloating(fl) => write!(f, "(double){}", fl),
+            SemanticLiteral::Typed(t) => write!(f, "{} {}", t.data_type(), t.value_string()),
             SemanticLiteral::String(s) => write!(f, "\"{}\"", s),
         }
     }
@@ -154,6 +159,28 @@ pub enum SemanticOperand {
     Mnemonic(OpcodeMnemonic),
 }
 
+impl SemanticOperand {
+    pub fn is_immediate(&self) -> bool {
+        matches!(self, SemanticOperand::Immediate(_))
+    }
+
+    pub fn is_register(&self) -> bool {
+        matches!(self, SemanticOperand::Register(_))
+    }
+
+    pub fn is_deref(&self) -> bool {
+        matches!(self, SemanticOperand::Deref(_))
+    }
+
+    pub fn is_engine_param(&self) -> bool {
+        matches!(self, SemanticOperand::EngineParam(_))
+    }
+
+    pub fn is_mnemonic(&self) -> bool {
+        matches!(self, SemanticOperand::Mnemonic(_))
+    }
+}
+
 impl Display for SemanticOperand {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -170,18 +197,21 @@ impl Display for SemanticOperand {
 pub enum SemanticImmediateType {
     /// Represents a flat literal value (i.e. '42', '0.5', etc.).
     Literal(SemanticLiteral),
-    /// Represents a label (i.e. '_start', '_proc', etc.) that will be resolved to an address at compile time.
-    Label(SemanticSymbol),
+    /// Represents a label (i.e. '_start', '_proc', etc.) that will be resolved to an address (that may contain an offset) at compile time.
+    Label(SemanticSymbol, i64),
+    /// Represents a variable binding (i.e. '&myBinding') that will be resolved to an address (that may contain an offset) at compile time.
+    Binding(SemanticSymbol, i64),
     /// Represents a constant binding (i.e. '&const MyBinding') that will be inlined to its value at compile time.
-    ConstBinding(SemanticSymbol),
+    ConstDerefBinding(SemanticSymbol),
 }
 
 impl Display for SemanticImmediateType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             SemanticImmediateType::Literal(lit) => write!(f, "{}", lit),
-            SemanticImmediateType::Label(label) => write!(f, "_{}", label),
-            SemanticImmediateType::ConstBinding(binding) => write!(f, "&const {}", binding),
+            SemanticImmediateType::Label(label, offset) => write!(f, "_{}", label.format_offset(*offset)),
+            SemanticImmediateType::Binding(binding, offset) => write!(f, "{}", binding.format_offset(*offset)),
+            SemanticImmediateType::ConstDerefBinding(binding) => write!(f, "&const {}", binding),
         }
     }
 }
@@ -200,7 +230,7 @@ impl Display for SemanticDeref {
         } else if self.offset > 0 {
             write!(f, "{}+{}", self.kind, self.offset)
         } else {
-            write!(f, "{} + -{}", self.kind, -self.offset)
+            write!(f, "{}-{}", self.kind, -self.offset)
         }
     }
 }
@@ -231,6 +261,18 @@ impl Display for SemanticDerefKind {
 pub struct SemanticSymbol {
     pub name: String,
     pub namespace: Option<String>,
+}
+
+impl SemanticSymbol {
+    pub fn format_offset(&self, offset: i64) -> String {
+        if offset == 0 {
+            format!("{}", self)
+        } else if offset > 0 {
+            format!("{}+{}", self, offset)
+        } else {
+            format!("{}-{}", self, -offset)
+        }
+    }
 }
 
 impl Display for SemanticSymbol {
