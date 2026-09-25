@@ -15,6 +15,12 @@ pub enum Opcode {
     StackAllocImm = 0x06,
     StackAllocReg = 0x07,
     StackFree = 0x08,
+    Exit = 0x09,
+    RetFree = 0x0A,
+    HAllocImm = 0x0B,
+    HAllocReg = 0x0C,
+    HFreeImm = 0x0D,
+    HFreeReg = 0x0E,
 
     // Move
     MovRegImm = 0x20,
@@ -65,6 +71,8 @@ pub enum Opcode {
     JmpIfGreaterEqual = 0xbe,
     JmpIfLessEqual = 0xbf,
     JmpIfGreater = 0xc0,
+    JmpIfErr = 0xc1,
+    JmpIfNotErr = 0xc2,
 }
 
 /// Represents the mnemonics for the F750 virtual machine opcodes.
@@ -82,6 +90,14 @@ pub enum OpcodeMnemonic {
     StackAlloc,
     #[strum(serialize = "stackfree")]
     StackFree,
+    #[strum(serialize = "exit")]
+    Exit,
+    #[strum(serialize = "retf")]
+    RetFree,
+    #[strum(serialize = "malloc")]
+    HAlloc,
+    #[strum(serialize = "free")]
+    HFree,
     #[strum(serialize = "mov")]
     Mov,
     #[strum(serialize = "jmp")]
@@ -142,6 +158,14 @@ pub enum OpcodeMnemonic {
     JmpIfGreater,
     #[strum(serialize = "jnge")]
     JmpIfNotLessEqual,
+    #[strum(serialize = "jer")]
+    JmpIfErr,
+    #[strum(serialize = "jnok")]
+    JmpIfNotOk,
+    #[strum(serialize = "jner")]
+    JmpIfNotErr,
+    #[strum(serialize = "jok")]
+    JmpIfOk,
     #[strum(serialize = "cmp")]
     Cmp,
     #[strum(serialize = "add")]
@@ -213,6 +237,38 @@ pub enum Register {
     LoopCounterA = 0x0A,
     #[strum(serialize = "lcb")]
     LoopCounterB = 0x0B,
+    #[strum(serialize = "la")]
+    LocalA = 0x0C,
+    #[strum(serialize = "lb")]
+    LocalB = 0x0D,
+    #[strum(serialize = "lc")]
+    LocalC = 0x0E,
+    #[strum(serialize = "ld")]
+    LocalD = 0x0F,
+    #[strum(serialize = "le")]
+    LocalE = 0x10,
+    #[strum(serialize = "lf")]
+    LocalF = 0x11,
+    #[strum(serialize = "lg")]
+    LocalG = 0x12,
+    #[strum(serialize = "lh")]
+    LocalH = 0x13,
+}
+
+impl Register {
+    pub fn local_arg(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Register::LocalA),
+            1 => Some(Register::LocalB),
+            2 => Some(Register::LocalC),
+            3 => Some(Register::LocalD),
+            4 => Some(Register::LocalE),
+            5 => Some(Register::LocalF),
+            6 => Some(Register::LocalG),
+            7 => Some(Register::LocalH),
+            _ => None,
+        }
+    }
 }
 
 /// Represents all compiler constructs of the F750 virtual machine.
@@ -244,6 +300,10 @@ pub enum CompilerConstruct {
     GetArg,
     #[strum(serialize = "engcall")]
     EngineCall,
+    #[strum(serialize = "loadargs")]
+    LoadArgs,
+    #[strum(serialize = "call")]
+    ProcCall,
 }
 
 impl CompilerConstruct {
@@ -266,4 +326,15 @@ pub enum CompilerDirective {
     Use,
     #[strum(serialize = "namespace")]
     Namespace,
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComparisonFlag {
+    Zero = 1 << 0,
+    Sign = 1 << 1,
+    Overflow = 1 << 2,
+    Carry = 1 << 3,
+    Parity = 1 << 4,
+    Error = 1 << 5,
 }

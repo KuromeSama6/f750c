@@ -227,12 +227,10 @@ impl BlockConstructConditional {
             Self::push_statement_jump(out, elif_statement, &elif_symbols[i]);
         }
 
-        if self.else_statement.is_some() {
-            out.push(SemanticRepr::Instruction(SemanticInstruction {
-                opcode: OpcodeMnemonic::Jmp,
-                operands: vec![SemanticOperand::Immediate(SemanticImmediateType::Label(else_symbol.clone(), 0))],
-            }));
-        }
+        out.push(SemanticRepr::Instruction(SemanticInstruction {
+            opcode: OpcodeMnemonic::Jmp,
+            operands: vec![SemanticOperand::Immediate(SemanticImmediateType::Label(if self.else_statement.is_some() {else_symbol.clone()} else {endif_symbol.clone()}, 0))],
+        }));
 
         // 2. body
         // if body
@@ -353,13 +351,13 @@ impl ConditionalBlockBuilder {
     }
 
     pub fn push_line(&mut self, line: BlockBodyLine) {
-        if self.cur_elif_statement.is_some() {
-            // we are currently in an elif block
-            self.cur_elif_body.push(line);
-
-        } else if self.has_else {
+        if self.has_else {
             // we are currently in an else block
             self.else_body.push(line);
+
+        } else if self.cur_elif_statement.is_some() {
+            // we are currently in an elif block
+            self.cur_elif_body.push(line);
 
         } else {
             // we are currently in the if block
@@ -581,5 +579,9 @@ fn expand_construct_engcall(construct: &SemanticCompilerConstruct, out: &mut Vec
         }));
     }
 
+    out.push(SemanticRepr::Instruction(SemanticInstruction {
+        opcode: OpcodeMnemonic::EngCall,
+        operands: vec![],
+    }));
     Ok(())
 }

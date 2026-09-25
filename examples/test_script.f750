@@ -30,6 +30,16 @@ _start:
 
     @pry DangerousConstant, &const SomeNumber
 
+    @if a64, 1, je
+        mov b64, 1
+    @elseif a64, 2, je
+        mov b64, 2
+    @elseif a64, 3, je
+        mov b64, 3
+    @else
+        mov b64, 0
+    @end
+
     @if b64, &const DangerousConstant, je
         mov a64, 50
         mov b64, &foo
