@@ -31,6 +31,7 @@ _start:
     mov a64, _start
 
     mov &sp64, magic
+    mov &d64, &extern some_module::SomeNumber
 
     mov a64, #EngCall.Character.Random.FloatRange
     push float -0.5

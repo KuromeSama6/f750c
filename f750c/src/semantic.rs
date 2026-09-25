@@ -1,10 +1,11 @@
 //! This module defines the semantic structures and representations used in the parsing step of the F750 compiler.
 
-use std::fmt::{Display, Formatter};
+use std::fmt::{write, Debug, Display, Formatter};
 use bitfield_struct::bitfield;
+use crate::bytecode::{BytecodeSerialize, BytecodeStream};
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic, Register};
 use crate::util;
-use crate::value::{DataType, DataTypeLiteral, RegisterSpec};
+use crate::value::{DataType, DataTypeLiteral, RegisterSpec, SymbolName};
 
 /// Semantic representation of a parsed line in the F750 source code.
 #[derive(Debug, Clone)]
@@ -75,6 +76,14 @@ impl Display for SemanticBindingDef {
     }
 }
 
+impl BytecodeSerialize for SemanticBindingDef {
+    fn serialize(&self, stream: &mut BytecodeStream) {
+        for value in &self.values {
+            value.serialize(stream);
+        }
+    }
+}
+
 /// Represents a semantic literal value.
 ///
 /// Note that semantic literals are different from [`DataType`]s in that they represent actual literal values written in the source code, which allows string literals to be present.
@@ -86,7 +95,6 @@ SemanticLiteral {
     Typed(DataTypeLiteral),
     String(String),
 }
-
 impl SemanticLiteral {
     pub fn size(&self) -> usize {
         match self {
@@ -114,6 +122,27 @@ impl Display for SemanticLiteral {
             SemanticLiteral::UntypedFloating(fl) => write!(f, "(double){}", fl),
             SemanticLiteral::Typed(t) => write!(f, "{} {}", t.data_type(), t.value_string()),
             SemanticLiteral::String(s) => write!(f, "\"{}\"", s),
+        }
+    }
+}
+
+impl BytecodeSerialize for SemanticLiteral {
+    fn serialize(&self, stream: &mut BytecodeStream) {
+        match self {
+            SemanticLiteral::UntypedInteger(i) => {
+                let bytes = (*i as u64).to_be_bytes();
+                stream.write_bytes(&bytes);
+            }
+            SemanticLiteral::UntypedFloating(f) => {
+                let bytes = (*f).to_be_bytes();
+                stream.write_bytes(&bytes);
+            }
+            SemanticLiteral::Typed(t) => {
+                t.serialize(stream);
+            }
+            SemanticLiteral::String(s) => {
+                stream.write_bytes(s.as_bytes());
+            }
         }
     }
 }
@@ -203,6 +232,31 @@ impl SemanticOperand {
     pub fn is_immediate_or_register(&self) -> bool {
         self.is_immediate() || self.is_register()
     }
+
+    pub fn get_external_symbol(&self) -> Option<ExternalSymbolUsage> {
+        let (symbol, is_deref): (SemanticSymbol, bool);
+        match self {
+            SemanticOperand::Immediate(SemanticImmediateType::Label(s, _)) => {
+                symbol = s.clone();
+                is_deref = false;
+            },
+            SemanticOperand::Immediate(SemanticImmediateType::Binding(s, _)) => {
+                symbol = s.clone();
+                is_deref = false;
+            },
+            SemanticOperand::Deref(SemanticDeref { kind: SemanticDerefKind::Binding(s), .. }) => {
+                symbol = s.clone();
+                is_deref = true;
+            },
+            _ => return None,
+        };
+
+        if !symbol.external {
+            return None;
+        }
+
+        Some(ExternalSymbolUsage::new(symbol.name.clone(), is_deref))
+    }
 }
 
 impl Display for SemanticOperand {
@@ -213,6 +267,21 @@ impl Display for SemanticOperand {
             SemanticOperand::Deref(deref) => write!(f, "{}", deref),
             SemanticOperand::EngineParam(param) => write!(f, "#{}", param),
             SemanticOperand::Mnemonic(mnemonic) => write!(f, "{}", mnemonic.as_ref()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalSymbolUsage {
+    pub name: SymbolName,
+    pub is_deref: bool,
+}
+
+impl ExternalSymbolUsage {
+    pub fn new(name: SymbolName, is_deref: bool) -> Self {
+        Self {
+            name,
+            is_deref,
         }
     }
 }
@@ -239,8 +308,8 @@ impl Display for SemanticImmediateType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             SemanticImmediateType::Literal(lit) => write!(f, "{}", lit),
-            SemanticImmediateType::Label(label, offset) => write!(f, "_{}", label.format_offset(*offset)),
-            SemanticImmediateType::Binding(binding, offset) => write!(f, "{}", binding.format_offset(*offset)),
+            SemanticImmediateType::Label(label, offset) => write!(f, "_{}", label.name.format_offset(*offset)),
+            SemanticImmediateType::Binding(binding, offset) => write!(f, "{}", binding.name.format_offset(*offset)),
             SemanticImmediateType::ConstDerefBinding(binding) => write!(f, "&const {}", binding),
         }
     }
@@ -289,36 +358,15 @@ impl Display for SemanticDerefKind {
 /// Represents a semantic symbol, which consists of a name and an optional namespace. Semantic symbols are used to represent the name of labels and bindings.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SemanticSymbol {
-    pub name: String,
-    pub namespace: Option<String>,
+    pub name: SymbolName,
+    pub external: bool,
 }
 
 impl SemanticSymbol {
-    pub fn new(name: &str, namespace: Option<&str>) -> Self {
+    pub fn new(name: SymbolName, external: bool) -> Self {
         Self {
-            name: name.to_string(),
-            namespace: namespace.map(|c| c.to_string()),
-        }
-    }
-
-    pub fn format_offset(&self, offset: i64) -> String {
-        if offset == 0 {
-            format!("{}", self)
-        } else if offset > 0 {
-            format!("{}+{}", self, offset)
-        } else {
-            format!("{}-{}", self, -offset)
-        }
-    }
-
-    pub fn with_current_module(&self, current_module: &str) -> Self {
-        if self.namespace.is_none() {
-            Self {
-                name: self.name.clone(),
-                namespace: Some(current_module.to_string()),
-            }
-        } else {
-            self.clone()
+            name,
+            external,
         }
     }
 }
@@ -326,19 +374,19 @@ impl SemanticSymbol {
 impl From<String> for SemanticSymbol {
     fn from(name: String) -> Self {
         Self {
-            name,
-            namespace: None,
+            name: SymbolName::new(&name, None),
+            external: false,
         }
     }
 }
 
 impl Display for SemanticSymbol {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if let Some(ns) = &self.namespace {
-            write!(f, "{}::{}", ns, self.name)
-        } else {
-            write!(f, "{}", self.name)
+        if self.external {
+            write!(f, "extern ")?;
         }
+
+        write!(f, "{}", self.name)
     }
 }
 

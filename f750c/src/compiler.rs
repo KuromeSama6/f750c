@@ -1,9 +1,12 @@
 //! This module defines functions and logic for the bytecode emission stage of the F750 compiler.
 
 use std::collections::HashMap;
+use indexmap::IndexMap;
 use thiserror::Error;
+use crate::bytecode::{BytecodeSerialize, BytecodeStream};
 use crate::semantic::{SemanticBindingDef, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticOperand, SemanticRepr, SemanticSource, SemanticSymbol};
 use crate::tokenizer;
+use crate::value::SymbolName;
 
 #[derive(Debug, Error)]
 pub enum CompilerError {
@@ -12,38 +15,46 @@ pub enum CompilerError {
     #[error("Binding definition found in non-data section")]
     BindingDefInNonDataSection,
     #[error("Duplicate binding definition: {0}")]
-    DuplicateBindingDef(SemanticSymbol),
+    DuplicateBindingDef(SymbolName),
     #[error("Use of undefined binding: {0}")]
-    UndefinedBinding(SemanticSymbol),
+    UndefinedBinding(SymbolName),
     #[error("Constant dereference of a binding with multiple values is not allowed: {0}")]
-    ConstDerefWithMultipleValues(SemanticSymbol),
+    ConstDerefWithMultipleValues(SymbolName),
     #[error("Constant dereference of a dynamic binding is not allowed: '{0}'. Either use dynamic dereference (&binding) or mark the binding as constant (const binding: ...).")]
-    ConstDerefOfNonConstantBinding(SemanticSymbol),
+    ConstDerefOfNonConstantBinding(SymbolName),
     #[error("Constant dereference (&const binding) of a constant binding '{0}' occured, but this binding was previously dynamically dereferenced (&binding) or directly accessed (binding).")]
-    MixedConstDerefOfConstantBinding(SemanticSymbol),
+    MixedConstDerefOfConstantBinding(SymbolName),
     #[error("Dynamic dereference (&binding) or direct access (binding) of a constant binding '{0}' occured, but this binding was previously constantly dereferenced (&const binding).")]
-    MixedDynamicDerefOfConstantBinding(SemanticSymbol),
+    MixedDynamicDerefOfConstantBinding(SymbolName),
 }
 pub type CompileResult<T> = Result<T, CompilerError>;
 
 #[derive(Debug, Default)]
 pub struct BindingTable {
-    pub entries: HashMap<SemanticSymbol, BindingTableEntry>,
-    tentative_entries: HashMap<SemanticSymbol, SemanticBindingDef>,
+    entries: IndexMap<SymbolName, BindingTableEntry>,
+    tentative_entries: HashMap<SymbolName, SemanticBindingDef>,
     counter: usize,
-    const_deref_map: HashMap<SemanticSymbol, bool>,
+    const_deref_map: HashMap<SymbolName, bool>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BindingTableEntry {
     pub def: SemanticBindingDef,
-    pub offset: Option<usize>,
+    pub alloc: BindingAllocationType,
+}
+
+#[derive(Debug, Clone)]
+pub enum BindingAllocationType {
+    Inline,
+    Extern,
+    /// The binding is allocated at a static offset in the data section.
+    Static(usize),
 }
 
 impl BindingTable {
     pub fn new() -> Self {
         BindingTable {
-            entries: HashMap::new(),
+            entries: IndexMap::new(),
             tentative_entries: HashMap::new(),
             counter: 0,
             const_deref_map: HashMap::new(),
@@ -73,18 +84,37 @@ impl BindingTable {
         for line in source {
             match line {
                 SemanticRepr::BindingDef(def) => {
-                    let symbol = SemanticSymbol::new(&def.name, Some(module_name));
+                    let symbol = SymbolName::new(&def.name, Some(module_name));
                     if self.entries.contains_key(&symbol) {
                         return Err(CompilerError::DuplicateBindingDef(symbol));
                     }
 
-                    self.tentative_entries.insert(symbol, def.clone());
+                    self.tentative_entries.insert(symbol.clone(), def.clone());
                 }
                 SemanticRepr::Instruction(instruction) => {
                     for operand in &instruction.operands {
+                        // external symbol discovery
+                        if let Some(external_symbol) = operand.get_external_symbol() {
+                            let def = SemanticBindingDef {
+                                name: external_symbol.name.to_string(),
+                                constant: false,
+                                values: vec![],
+                            };
+
+                            if !self.entries.contains_key(&external_symbol.name) {
+                                self.tentative_entries.insert(external_symbol.name.clone(), def.clone());
+
+                                let entry = BindingTableEntry {
+                                    def,
+                                    alloc: BindingAllocationType::Extern,
+                                };
+                                self.entries.insert(external_symbol.name.clone(), entry);
+                            }
+                        }
+
                         match operand {
                             SemanticOperand::Immediate(SemanticImmediateType::Binding(symbol, offset)) => {
-                                let symbol = symbol.with_current_module(module_name);
+                                let symbol = symbol.name.with_current_module(module_name);
                                 if let Some(is_const) = self.const_deref_map.get(&symbol) && *is_const {
                                     return Err(CompilerError::MixedDynamicDerefOfConstantBinding(symbol));
                                 }
@@ -96,7 +126,7 @@ impl BindingTable {
                             }
                             SemanticOperand::Deref(deref) => {
                                 if let SemanticDerefKind::Binding(symbol) = &deref.kind {
-                                    let symbol = symbol.with_current_module(module_name);
+                                    let symbol = symbol.name.with_current_module(module_name);
                                     if let Some(is_const) = self.const_deref_map.get(&symbol) && *is_const {
                                         return Err(CompilerError::MixedDynamicDerefOfConstantBinding(symbol));
                                     }
@@ -108,7 +138,7 @@ impl BindingTable {
                                 }
                             }
                             SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol)) => {
-                                let symbol = symbol.with_current_module(module_name);
+                                let symbol = symbol.name.with_current_module(module_name);
                                 if let Some(is_const) = self.const_deref_map.get(&symbol) && !is_const {
                                     return Err(CompilerError::MixedConstDerefOfConstantBinding(symbol));
                                 }
@@ -157,24 +187,24 @@ impl BindingTable {
                         return Err(CompilerError::BindingDefInNonDataSection);
                     }
 
-                    let symbol = SemanticSymbol::new(&def.name, Some(module_name));
+                    let symbol = SymbolName::new(&def.name, Some(module_name));
 
                     if self.entries.contains_key(&symbol) {
                         return Err(CompilerError::DuplicateBindingDef(symbol));
                     }
 
-                    let offset = if !self.can_inline(&symbol) {
+                    let alloc = if !self.can_inline(&symbol) {
                         let value = self.counter;
                         self.counter += def.total_size();
-                        Some(value)
+                        BindingAllocationType::Static(value)
 
                     } else {
-                        None
+                        BindingAllocationType::Inline
                     };
 
                     let entry = BindingTableEntry {
                         def: def.clone(),
-                        offset,
+                        alloc,
                     };
                     self.entries.insert(symbol, entry);
                 }
@@ -195,7 +225,7 @@ impl BindingTable {
 
             for operand in instruction.operands.iter_mut() {
                 if let SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol)) = operand {
-                    let symbol = symbol.with_current_module(module_name);
+                    let symbol = symbol.name.with_current_module(module_name);
                     // inline the binding's value
                     let entry = self.get_entry_or_err(&symbol)?;
                     let value = &entry.values[0];
@@ -208,39 +238,99 @@ impl BindingTable {
         Ok(())
     }
 
-    pub fn get_offset(&self, symbol: &SemanticSymbol) -> Option<Option<usize>> {
+    pub fn get_offset(&self, symbol: &SymbolName) -> Option<Option<usize>> {
         self.entries.get(symbol)
-            .map(|c| c.offset)
+            .map(|c| match c.alloc {
+                BindingAllocationType::Static(offset) => Some(offset),
+                _ => None,
+            })
     }
 
-    pub fn get_offset_or_err(&self, symbol: &SemanticSymbol) -> CompileResult<Option<usize>> {
+    pub fn get_offset_or_err(&self, symbol: &SymbolName) -> CompileResult<Option<usize>> {
         self.get_offset(symbol)
             .ok_or_else(|| CompilerError::UndefinedBinding(symbol.clone()))
     }
 
-    pub fn get_entry(&self, symbol: &SemanticSymbol) -> Option<&SemanticBindingDef> {
+    pub fn get_entry(&self, symbol: &SymbolName) -> Option<&SemanticBindingDef> {
         self.entries.get(symbol)
             .map(|c| &c.def)
     }
 
-    pub fn get_entry_or_err(&self, symbol: &SemanticSymbol) -> CompileResult<&SemanticBindingDef> {
+    pub fn get_entry_or_err(&self, symbol: &SymbolName) -> CompileResult<&SemanticBindingDef> {
         self.get_entry(symbol)
             .ok_or_else(|| CompilerError::UndefinedBinding(symbol.clone()))
     }
 
-    fn get_tentative_entry(&self, symbol: &SemanticSymbol) -> Option<&SemanticBindingDef> {
+    fn get_tentative_entry(&self, symbol: &SymbolName) -> Option<&SemanticBindingDef> {
         self.tentative_entries.get(symbol)
     }
 
-    fn get_tentative_entry_or_err(&self, symbol: &SemanticSymbol) -> CompileResult<&SemanticBindingDef> {
+    fn get_tentative_entry_or_err(&self, symbol: &SymbolName) -> CompileResult<&SemanticBindingDef> {
         self.get_tentative_entry(symbol)
             .ok_or_else(|| CompilerError::UndefinedBinding(symbol.clone()))
     }
 
-    fn can_inline(&self, symbol: &SemanticSymbol) -> bool {
+    fn can_inline(&self, symbol: &SymbolName) -> bool {
         if let Some(b) = self.const_deref_map.get(symbol) && *b {
             return true;
         }
         false
+    }
+}
+
+impl BytecodeSerialize for BindingTable {
+    fn serialize(&self, stream: &mut BytecodeStream) {
+        let mut entries = Vec::new();
+        let mut current_namespace: Option<&str> = None;
+
+        for (i, (symbol, entry)) in self.entries.iter().enumerate() {
+            entries.push((symbol, entry));
+
+            let mut flag = 0u8;
+            // const
+            if entry.def.constant {
+                flag |= 1 << 0;
+            }
+            // extern
+            if matches!(entry.alloc, BindingAllocationType::Extern) {
+                flag |= 1 << 1;
+            }
+            // end
+            if i == self.entries.len() - 1 {
+                flag |= 1 << 2;
+            }
+
+            let namespace = symbol.namespace.as_ref().unwrap();
+            let write_namespace = current_namespace != Some(namespace);
+            if write_namespace {
+                flag |= 1 << 3;
+                current_namespace = Some(namespace);
+            }
+
+            stream.write_u8(flag);
+            stream.write_varint64(i as u64);
+            if write_namespace {
+                stream.write_cstr(namespace);
+            }
+
+            stream.write_cstr(&symbol.name);
+
+            if let BindingAllocationType::Static(offset) = entry.alloc {
+                stream.write_varint64(offset as u64);
+            }
+        }
+
+        // Data section
+        let size: usize = self.entries.values()
+            .filter(|c| matches!(c.alloc, BindingAllocationType::Static(_)))
+            .map(|c| c.def.total_size())
+            .sum();
+        stream.write_varint64(size as u64);
+
+        for entry in self.entries.values() {
+            if let BindingAllocationType::Static(_) = entry.alloc {
+                entry.def.serialize(stream);
+            }
+        }
     }
 }

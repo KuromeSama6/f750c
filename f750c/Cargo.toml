@@ -10,3 +10,5 @@ bitfield-struct = "0.13.0"
 parse_int = "0.9.0"
 log = "0.4.34"
 uuid = {version = "1.26.1", features = ["v7"]}
+indexmap = "2.14.2"
+lazy_static = "1.5.0"

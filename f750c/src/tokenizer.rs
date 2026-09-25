@@ -4,6 +4,8 @@
 
 use std::collections::VecDeque;
 use std::fmt::Display;
+use std::str::FromStr;
+use crate::opcode::ReservedWord;
 use crate::parser::{ParseError, ParseResult};
 use crate::tokenizer;
 
@@ -29,8 +31,6 @@ pub const ATOM_HASHTAG: char = '#';
 /// Denotes the beginning of a compiler construct.
 pub const ATOM_AT: char = '@';
 
-/// Denotes a constant binding.
-pub const TOKEN_CONST_BINDING: &str = "const";
 /// The character dot(.).
 pub const CHAR_DOT: char = '.';
 
@@ -53,6 +53,7 @@ pub enum Token {
     FloatLiteral(f64),
     /// Represents a quoted string literal, which is enclosed in double quotes.
     QuotedString(String),
+    Keyword(ReservedWord),
     /// Represents anything that does not match any of the other token types, such as identifiers, labels, and binding names.
     Token(String),
 }
@@ -71,6 +72,7 @@ impl Display for Token {
             Token::IntLiteral(val) => write!(f, "{}", val),
             Token::FloatLiteral(val) => write!(f, "{}", val),
             Token::QuotedString(val) => write!(f, "\"{}\"", val),
+            Token::Keyword(val) => write!(f, "{}", val.as_ref()),
             Token::Token(val) => write!(f, "{}", val),
         }
     }
@@ -251,12 +253,15 @@ pub fn tokenize_line(line: &str) -> ParseResult<TokenizedLine> {
                     let next_special = line[cur..]
                         .find(|c| is_special_atom(c, is_digit))
                         .unwrap_or(line.len() - cur);
+
                     let token = &line[cur..cur + next_special];
 
                     if let Ok(int_val) = parse_int::parse(token) {
                         ret.push(Token::IntLiteral(int_val));
                     } else if let Ok(float_val) = token.parse::<f64>() {
                         ret.push(Token::FloatLiteral(float_val));
+                    } else if let Ok(keyword) = ReservedWord::from_str(token) {
+                        ret.push(Token::Keyword(keyword));
                     } else {
                         ret.push(Token::Token(token.to_string()));
                     }

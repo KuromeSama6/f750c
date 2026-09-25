@@ -4,10 +4,11 @@ use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use strum::{AsRefStr, Display, EnumString, FromRepr};
 use thiserror::Error;
+use crate::bytecode::BytecodeSerialize;
 use crate::opcode::Register;
 use crate::parser::{ParseErrorDetails, ParseError, ParseResult};
 use crate::parser::ParseError::InvalidRegisterSpec;
-use crate::semantic::SemanticLiteral;
+use crate::semantic::{SemanticLiteral, SemanticSymbol};
 
 /// Represents the data types in the F750 language.
 /// 
@@ -148,6 +149,19 @@ impl From<SemanticLiteral> for DataTypeLiteral {
     }
 }
 
+impl BytecodeSerialize for DataTypeLiteral {
+    fn serialize(&self, stream: &mut crate::bytecode::BytecodeStream) {
+        match self {
+            DataTypeLiteral::Byte(v) => stream.write_u8(*v),
+            DataTypeLiteral::Word(v) => stream.write_u16(*v),
+            DataTypeLiteral::Dword(v) => stream.write_u32(*v),
+            DataTypeLiteral::Qword(v) => stream.write_u64(*v),
+            DataTypeLiteral::Float(v) => stream.write_f32(*v),
+            DataTypeLiteral::Double(v) => stream.write_f64(*v),
+        }
+    }
+}
+
 /// Represents the width of a register (or a view into an underlying register) in the F750 language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, EnumString, Display)]
 pub enum RegisterWidth {
@@ -232,5 +246,67 @@ impl RegisterSpec {
             register,
             width,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SymbolName {
+    pub name: String,
+    pub namespace: Option<String>,
+}
+
+impl SymbolName {
+    pub fn new(name: &str, namespace: Option<&str>) -> Self {
+        Self {
+            name: name.to_string(),
+            namespace: namespace.map(|c| c.to_string()),
+        }
+    }
+
+    pub fn new_extern(name: &str, namespace: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            namespace: Some(namespace.to_string()),
+        }
+    }
+
+    pub fn format_offset(&self, offset: i64) -> String {
+        if offset == 0 {
+            format!("{}", self)
+        } else if offset > 0 {
+            format!("{}+{}", self, offset)
+        } else {
+            format!("{}-{}", self, -offset)
+        }
+    }
+
+    pub fn with_current_module(&self, current_module: &str) -> Self {
+        if self.namespace.is_none() {
+            Self {
+                name: self.name.clone(),
+                namespace: Some(current_module.to_string()),
+            }
+        } else {
+            self.clone()
+        }
+    }
+}
+
+impl From<String> for SymbolName {
+    fn from(name: String) -> Self {
+        Self {
+            name,
+            namespace: None,
+        }
+    }
+}
+
+impl Display for SymbolName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(ns) = &self.namespace {
+            write!(f, "{}::{}", ns, self.name)
+        } else {
+            write!(f, "{}", self.name)
+        }
     }
 }

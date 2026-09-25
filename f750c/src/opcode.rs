@@ -328,6 +328,16 @@ pub enum CompilerDirective {
     Namespace,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, AsRefStr, Display, EnumString)]
+pub enum ReservedWord {
+    #[strum(serialize = "const")]
+    Const,
+    #[strum(serialize = "extern")]
+    Extern,
+    #[strum(serialize = "struct")]
+    Alias,
+}
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonFlag {

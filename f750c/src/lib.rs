@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Instant;
 use log::{debug, info};
 use thiserror::Error;
-use crate::bytecode::BytecodeStream;
+use crate::bytecode::{BytecodeSerialize, BytecodeStream};
 use crate::compiler::BindingTable;
 use crate::construct::ConstructExpansionErrorDetails;
 use crate::parser::{ParseError, ParseErrorDetails};
@@ -66,9 +66,10 @@ pub fn compile_source(input: CompilerInput) -> CompileResult<CompilerOutput> {
     // binding table creation
     let binding_table = BindingTable::parse_and_lower(&mut semantic_lines)?;
 
+    let mut bytecode_stream = BytecodeStream::new_with_header();
+    // binding table
+    binding_table.serialize(&mut bytecode_stream);
 
-
-    let mut bytecode_stream = BytecodeStream::new(16);
     Ok(CompilerOutput {
         bytes: bytecode_stream,
         semantic_lines: semantic_lines.into_iter().flat_map(|(_, v)| v).collect(),

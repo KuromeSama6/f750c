@@ -6,11 +6,12 @@ use std::fmt::Display;
 use std::str::FromStr;
 use log::{debug, trace, warn};
 use thiserror::Error;
+use lazy_static::lazy_static;
 use crate::semantic::{SemanticRepr, SemanticOperand, SemanticBindingDef, SemanticInstruction, SemanticSymbol, SemanticCompilerConstruct, SemanticLiteral, SemanticDeref, SemanticDerefKind, SemanticImmediateType};
 use crate::{semantic, tokenizer, util};
-use crate::opcode::{CompilerConstruct, OpcodeMnemonic};
+use crate::opcode::{CompilerConstruct, OpcodeMnemonic, ReservedWord};
 use crate::tokenizer::{Token, TokenStream, TokenizedLine};
-use crate::value::{DataType, DataTypeLiteral, RegisterSpec, RegisterSpecError};
+use crate::value::{DataType, DataTypeLiteral, RegisterSpec, RegisterSpecError, SymbolName};
 
 /// Represents a parsing error with additional details to locate the error in the source code.
 #[derive(Debug, Error, Clone)]
@@ -46,6 +47,8 @@ pub enum ParseError {
     DoubleUnderscoreLabelReserved,
     #[error("Invalid data type for literal '{0}': {1}")]
     InvalidDataTypeForLiteral(String, DataType),
+    #[error("Invalid external symbol without namespace: '{0}'. If you are using an alias, do not use the 'extern' keyword.")]
+    ExternalSymbolWithoutNamespace(String),
 
     #[error("Invalid register spec: {0}")]
     InvalidRegisterSpec(#[from] RegisterSpecError),
@@ -60,6 +63,8 @@ pub enum ParseError {
     OffsetNotAllowed,
     #[error("Constant dereference (&const) not valid here")]
     ConstantDerefNotAllowed,
+    #[error("Constant dereference of external binding (&const extern binding) is not allowed")]
+    ConstantDerefExternalNotAllowed,
     #[error("Memory offset on a non-dereferenced register or binding is not allowed")]
     NonDerefOffsetNotAllowed,
     #[error("Constant binding dereference (&const binding) with an offset is not allowed")]
@@ -137,8 +142,8 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRe
         let first = stream.next_non_whitespace_or_err()?;
 
         match first {
-            Token::Token(token) => {
-                if token == tokenizer::TOKEN_CONST_BINDING {
+            Token::Keyword(keyword) => {
+                if keyword == ReservedWord::Const {
                     let name = stream.next_non_whitespace_or_err()?;
                     if let Token::Token(s) = name {
                         binding_name = s;
@@ -149,8 +154,11 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRe
                     }
 
                 } else {
-                    binding_name = token;
+                    return Err(ParseError::UnexpectedToken(format!("Keyword '{}' not valid here", keyword.as_ref())));
                 }
+            }
+            Token::Token(token) => {
+                binding_name = token;
             }
             _ => {
                 return Err(ParseError::UnexpectedToken(format!("Expected an identifier or a modifier at the start of a binding definition, found {:?}", first)));
@@ -211,7 +219,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRe
         if name.starts_with(tokenizer::ATOM_UNDERLINE) {
             return Err(ParseError::DoubleUnderscoreLabelReserved);
         }
-        return Ok(SemanticRepr::Label(name.into()));
+        return Ok(SemanticRepr::Label(SemanticSymbol::new(name.into(), false)));
     }
 
     // instruction
@@ -354,6 +362,10 @@ impl OperandsBuilder {
                     return Err(ParseError::ConstantBindingDerefOffsetNotAllowed);
                 }
 
+                if symbol.external {
+                    return Err(ParseError::ConstantDerefExternalNotAllowed);
+                }
+
                 self.push_next(SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol.clone())));
 
             } else {
@@ -448,7 +460,7 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
                     builder.deref = true;
 
                     // &const
-                    if let Some(Token::Token(s)) = stream.peek_non_whitespace() && s == tokenizer::TOKEN_CONST_BINDING {
+                    while let Some(Token::Keyword(s)) = stream.peek_non_whitespace() && *s == ReservedWord::Const {
                         stream.next_non_whitespace_or_err()?;
                         builder.const_deref = true;
 
@@ -465,6 +477,16 @@ fn parse_arguments(stream: &mut TokenStream, allow_mnemonic_as_operand: bool) ->
 
                     // finalize
                     builder.push_next_flat(SemanticOperand::EngineParam(param_name))?;
+                }
+                Token::Keyword(kw) => {
+                    match kw {
+                        ReservedWord::Extern => {
+                            let symbol = parse_semantic_symbol(&format!("{kw}"), stream)?;
+                            builder.offset = parse_token_offset(stream)?;
+                            builder.finalize_binding(symbol)?;
+                        }
+                        _ => return Err(ParseError::UnexpectedToken(format!("Keyword '{kw}' not valid here"))),
+                    }
                 }
                 Token::Token(token) => {
                     // mnenonic as operand
@@ -577,6 +599,25 @@ fn parse_token_offset(stream: &mut TokenStream) -> ParseResult<i64> {
 
 /// Parses a semantic symbol in the form of `namespace::name` or just `name` from a [`TokenStream`]. If no namespace is specified, the `namespace` field of the returned `SemanticSymbol` will be `None`.
 fn parse_semantic_symbol(first: &str, stream: &mut TokenStream) -> ParseResult<SemanticSymbol> {
+    let external = if first == ReservedWord::Extern.as_ref() {
+        true
+    } else {
+        false
+    };
+
+    let first = if external {
+        // If the first token is "extern", we expect the next token to be the actual name
+        let next = stream.next_non_whitespace_or_err()?;
+        let Token::Token(s) = next else {
+            return Err(ParseError::UnexpectedToken(format!("Expected a namespace or name after 'extern', found {next}")));
+        };
+
+        s
+
+    } else {
+        first.to_string()
+    };
+
     if let Some(Token::NamespaceSeparator) = stream.peek_non_whitespace() {
         stream.next_non_whitespace_or_err()?;
         let second = stream.next_non_whitespace_or_err()?;
@@ -585,14 +626,18 @@ fn parse_semantic_symbol(first: &str, stream: &mut TokenStream) -> ParseResult<S
         };
 
         Ok(SemanticSymbol {
-            name: second,
-            namespace: Some(first.to_string()),
+            name: SymbolName::new(&second, Some(&first)),
+            external,
         })
 
     } else {
+        if external {
+            return Err(ParseError::ExternalSymbolWithoutNamespace(first));
+        }
+
         Ok(SemanticSymbol {
-            name: first.to_string(),
-            namespace: None,
+            name: SymbolName::new(&first, None),
+            external,
         })
     }
 }
