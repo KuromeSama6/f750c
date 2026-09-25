@@ -28,10 +28,10 @@ _start:
     mov d32, &foo
     mov &foo, a32
     mov &SomeString, 5
-    mov a64, _start
+    mov a64, _extern some_module::some_proc + 32
 
     mov &sp64, magic
-    mov &d64, &extern some_module::SomeNumber
+    mov &d64, &extern some_module::SomeNumber + 64
 
     mov a64, #EngCall.Character.Random.FloatRange
     push float -0.5

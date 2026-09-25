@@ -27,7 +27,14 @@ impl Display for SemanticRepr {
         match self {
             SemanticRepr::SpecialSection(section) => write!(f, "{}", section),
             SemanticRepr::BindingDef(binding) => write!(f, "{binding}"),
-            SemanticRepr::Label(label) => write!(f, "_{}:", label),
+            SemanticRepr::Label(label) => {
+                if label.external {
+                    write!(f, "(extern) _{}:", label.name)
+
+                } else {
+                    write!(f, "_{}:", label.name)
+                }
+            },
             SemanticRepr::Instruction(instr) => write!(f, "{}", instr),
             SemanticRepr::CompilerConstruct(construct) => write!(f, "{}", construct),
         }
@@ -118,8 +125,8 @@ impl SemanticLiteral {
 impl Display for SemanticLiteral {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            SemanticLiteral::UntypedInteger(i) => write!(f, "(qword){}", i),
-            SemanticLiteral::UntypedFloating(fl) => write!(f, "(double){}", fl),
+            SemanticLiteral::UntypedInteger(i) => write!(f, "(qword) {}", i),
+            SemanticLiteral::UntypedFloating(fl) => write!(f, "(double) {}", fl),
             SemanticLiteral::Typed(t) => write!(f, "{} {}", t.data_type(), t.value_string()),
             SemanticLiteral::String(s) => write!(f, "\"{}\"", s),
         }
@@ -308,9 +315,22 @@ impl Display for SemanticImmediateType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             SemanticImmediateType::Literal(lit) => write!(f, "{}", lit),
-            SemanticImmediateType::Label(label, offset) => write!(f, "_{}", label.name.format_offset(*offset)),
+            SemanticImmediateType::Label(label, offset) => {
+                if label.external {
+                    write!(f, "(extern) _{}", label.name.format_offset(*offset))
+
+                } else {
+                    write!(f, "_{}", label.name.format_offset(*offset))
+                }
+            },
             SemanticImmediateType::Binding(binding, offset) => write!(f, "{}", binding.name.format_offset(*offset)),
-            SemanticImmediateType::ConstDerefBinding(binding) => write!(f, "&const {}", binding),
+            SemanticImmediateType::ConstDerefBinding(binding) => {
+                if binding.external {
+                    write!(f, "(extern) ")?
+                }
+
+                write!(f, "&const {}", binding.name)
+            },
         }
     }
 }
@@ -348,7 +368,13 @@ pub enum SemanticDerefKind {
 impl Display for SemanticDerefKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            SemanticDerefKind::Binding(binding) => write!(f, "&{}", binding),
+            SemanticDerefKind::Binding(binding) => {
+                if binding.external {
+                    write!(f, "(extern) &{}", binding.name)
+                } else {
+                    write!(f, "&{}", binding.name)
+                }
+            },
             SemanticDerefKind::Register(reg) => write!(f, "&{}", reg),
             SemanticDerefKind::Address(addr) => write!(f, "&0x{:x}", addr),
         }
@@ -377,16 +403,6 @@ impl From<String> for SemanticSymbol {
             name: SymbolName::new(&name, None),
             external: false,
         }
-    }
-}
-
-impl Display for SemanticSymbol {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.external {
-            write!(f, "extern ")?;
-        }
-
-        write!(f, "{}", self.name)
     }
 }
 

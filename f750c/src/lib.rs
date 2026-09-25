@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::time::Instant;
+use indexmap::IndexMap;
 use log::{debug, info};
 use thiserror::Error;
 use crate::bytecode::{BytecodeSerialize, BytecodeStream};
-use crate::compiler::BindingTable;
+use crate::compiler::{BindingTable, LabelTable};
 use crate::construct::ConstructExpansionErrorDetails;
 use crate::parser::{ParseError, ParseErrorDetails};
 use crate::semantic::{SemanticBindingDef, SemanticRepr, SemanticSymbol};
@@ -57,7 +58,7 @@ pub struct CompilerOutput {
 }
 
 pub fn compile_source(input: CompilerInput) -> CompileResult<CompilerOutput> {
-    let mut semantic_lines = HashMap::new();
+    let mut semantic_lines = IndexMap::new();
     for (name, source) in input.sources.iter() {
         let processed = process_single_source(source)?;
         semantic_lines.insert(name.clone(), processed);
@@ -69,6 +70,9 @@ pub fn compile_source(input: CompilerInput) -> CompileResult<CompilerOutput> {
     let mut bytecode_stream = BytecodeStream::new_with_header();
     // binding table
     binding_table.serialize(&mut bytecode_stream);
+
+    let label_table = LabelTable::parse(&semantic_lines)?;
+    label_table.serialize(&mut bytecode_stream);
 
     Ok(CompilerOutput {
         bytes: bytecode_stream,

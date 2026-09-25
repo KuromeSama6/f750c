@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use thiserror::Error;
 use crate::bytecode::{BytecodeSerialize, BytecodeStream};
-use crate::semantic::{SemanticBindingDef, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticOperand, SemanticRepr, SemanticSource, SemanticSymbol};
+use crate::semantic::{SemanticBindingDef, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticLiteral, SemanticOperand, SemanticRepr, SemanticSource, SemanticSymbol};
 use crate::tokenizer;
 use crate::value::SymbolName;
 
@@ -26,6 +26,11 @@ pub enum CompilerError {
     MixedConstDerefOfConstantBinding(SymbolName),
     #[error("Dynamic dereference (&binding) or direct access (binding) of a constant binding '{0}' occured, but this binding was previously constantly dereferenced (&const binding).")]
     MixedDynamicDerefOfConstantBinding(SymbolName),
+
+    #[error("Duplicate label definition: {0}")]
+    DuplicateLabel(SymbolName),
+    #[error("Use of undefined label: {0}")]
+    UndefinedLabel(SymbolName),
 }
 pub type CompileResult<T> = Result<T, CompilerError>;
 
@@ -61,7 +66,7 @@ impl BindingTable {
         }
     }
 
-    pub fn parse_and_lower(lines: &mut HashMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
+    pub fn parse_and_lower(lines: &mut IndexMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
         let mut ret = Self::new();
 
         for (module_name, source) in lines.iter() {
@@ -330,6 +335,120 @@ impl BytecodeSerialize for BindingTable {
         for entry in self.entries.values() {
             if let BindingAllocationType::Static(_) = entry.alloc {
                 entry.def.serialize(stream);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LabelTable {
+    entries: IndexMap<SymbolName, LabelTableEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct LabelTableEntry {
+    symbol: SemanticSymbol,
+    addr: u64,
+}
+
+impl LabelTable {
+    pub fn parse(lines: &IndexMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
+        let mut entries = IndexMap::new();
+        let mut addr_counter = 0u64;
+
+        // parse
+        for (module_name, source) in lines {
+            for line in source {
+                match line {
+                    SemanticRepr::Label(symbol) => {
+                        if entries.contains_key(&symbol.name) {
+                            return Err(CompilerError::DuplicateLabel(symbol.name.clone()));
+                        }
+
+                        let name = symbol.name.with_current_module(module_name);
+                        let entry = LabelTableEntry {
+                            symbol: SemanticSymbol::new(name.clone(), false),
+                            addr: addr_counter,
+                        };
+                        entries.insert(name, entry);
+                    }
+                    SemanticRepr::Instruction(_) => {
+                        addr_counter += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // lower
+        for (module_name, source) in lines {
+            for line in source {
+                if let SemanticRepr::Instruction(instruction) = line {
+                    for operand in &instruction.operands {
+                        // external label discovery
+                        if let Some(external) = operand.get_external_symbol() {
+                            if !entries.contains_key(&external.name) {
+                                let entry = LabelTableEntry {
+                                    symbol: SemanticSymbol::new(external.name.clone(), true),
+                                    addr: 0,
+                                };
+                                entries.insert(external.name.clone(), entry);
+                            }
+                        }
+
+                        // process operand
+                        if let SemanticOperand::Immediate(SemanticImmediateType::Label(symbol, offset)) = operand {
+                            let name = symbol.name.with_current_module(module_name);
+                            if !entries.contains_key(&name) {
+                                return Err(CompilerError::UndefinedLabel(name));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            entries,
+        })
+    }
+}
+
+impl BytecodeSerialize for LabelTable {
+    fn serialize(&self, stream: &mut BytecodeStream) {
+        let mut entries = Vec::new();
+        let mut current_namespace: Option<&str> = None;
+
+        for (i, (symbol, entry)) in self.entries.iter().enumerate() {
+            entries.push((symbol, entry));
+
+            let mut flag = 0u8;
+            // extern
+            if entry.symbol.external {
+                flag |= 1 << 0;
+            }
+            // end
+            if i == self.entries.len() - 1 {
+                flag |= 1 << 1;
+            }
+
+            let namespace = symbol.namespace.as_ref().unwrap();
+            let write_namespace = current_namespace != Some(namespace);
+            if write_namespace {
+                flag |= 1 << 2;
+                current_namespace = Some(namespace);
+            }
+
+            stream.write_u8(flag);
+            stream.write_varint64(i as u64);
+            if write_namespace {
+                stream.write_cstr(namespace);
+            }
+
+            stream.write_cstr(&symbol.name);
+
+            if !entry.symbol.external {
+                stream.write_varint64(entry.addr);
             }
         }
     }
