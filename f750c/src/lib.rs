@@ -63,22 +63,10 @@ pub fn compile_source(input: CompilerInput) -> CompileResult<CompilerOutput> {
         semantic_lines.insert(name.clone(), processed);
     }
 
-    // binding resolution
-    {
-        let mut binding_table = BindingTable::new();
-        for (module_name, source) in semantic_lines.iter() {
-            binding_table.preprocess_bindings(source, module_name)?;
-        }
+    // binding table creation
+    let binding_table = BindingTable::parse_and_lower(&mut semantic_lines)?;
 
-        for (module_name, source) in semantic_lines.iter() {
-            binding_table.append_bindings(source, module_name)?;
-        }
 
-        // binding inlining
-        for (module_name, source) in semantic_lines.iter_mut() {
-            binding_table.resolve_bindings(source, module_name)?;
-        }
-    }
 
     let mut bytecode_stream = BytecodeStream::new(16);
     Ok(CompilerOutput {

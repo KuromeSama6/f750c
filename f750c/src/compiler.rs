@@ -50,7 +50,26 @@ impl BindingTable {
         }
     }
 
-    pub fn preprocess_bindings(&mut self, source: &SemanticSource, module_name: &str) -> CompileResult<()> {
+    pub fn parse_and_lower(lines: &mut HashMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
+        let mut ret = Self::new();
+
+        for (module_name, source) in lines.iter() {
+            ret.preprocess_bindings(source, module_name)?;
+        }
+
+        for (module_name, source) in lines.iter() {
+            ret.append_bindings(source, module_name)?;
+        }
+
+        // binding inlining
+        for (module_name, source) in lines.iter_mut() {
+            ret.lower_bindings(source, module_name)?;
+        }
+        
+        Ok(ret)
+    }
+    
+    fn preprocess_bindings(&mut self, source: &SemanticSource, module_name: &str) -> CompileResult<()> {
         for line in source {
             match line {
                 SemanticRepr::BindingDef(def) => {
@@ -116,7 +135,7 @@ impl BindingTable {
         Ok(())
     }
 
-    pub fn append_bindings(&mut self, source: &SemanticSource, module_name: &str) -> CompileResult<()> {
+    fn append_bindings(&mut self, source: &SemanticSource, module_name: &str) -> CompileResult<()> {
         let mut section_open = false;
 
         for (i, line) in source.iter().enumerate() {
@@ -168,46 +187,20 @@ impl BindingTable {
         Ok(())
     }
 
-    pub fn resolve_bindings(&mut self, source: &mut SemanticSource, module_name: &str) -> CompileResult<()> {
+    fn lower_bindings(&mut self, source: &mut SemanticSource, module_name: &str) -> CompileResult<()> {
         for line in source.iter_mut() {
             let SemanticRepr::Instruction(instruction) = line else {
                 continue;
             };
 
             for operand in instruction.operands.iter_mut() {
-                match operand {
-                    SemanticOperand::Immediate(SemanticImmediateType::Binding(symbol, offset)) => {
-                        let symbol = symbol.with_current_module(module_name);
+                if let SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol)) = operand {
+                    let symbol = symbol.with_current_module(module_name);
+                    // inline the binding's value
+                    let entry = self.get_entry_or_err(&symbol)?;
+                    let value = &entry.values[0];
 
-                        // inline the binding's address
-                        let addr = self.get_offset_or_err(&symbol)?.unwrap();
-                        let value = addr as u64 + *offset as u64;
-
-                        *operand = SemanticOperand::Immediate(SemanticImmediateType::from_u64_untyped(value));
-                    }
-                    SemanticOperand::Deref(deref) => {
-                        if let SemanticDerefKind::Binding(symbol) = &deref.kind {
-                            let symbol = symbol.with_current_module(module_name);
-
-                            // inline the binding's address
-                            let addr = self.get_offset_or_err(&symbol)?.unwrap();
-                            let value = addr as u64 + deref.offset as u64;
-
-                            *operand = SemanticOperand::Deref(SemanticDeref {
-                                kind: SemanticDerefKind::Address(value),
-                                offset: 0,
-                            });
-                        }
-                    }
-                    SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol)) => {
-                        let symbol = symbol.with_current_module(module_name);
-                        // inline the binding's value
-                        let entry = self.get_entry_or_err(&symbol)?;
-                        let value = &entry.values[0];
-
-                        *operand = SemanticOperand::Immediate(SemanticImmediateType::Literal(value.clone()));
-                    }
-                    _ => {}
+                    *operand = SemanticOperand::Immediate(SemanticImmediateType::Literal(value.clone()));
                 }
             }
         }
