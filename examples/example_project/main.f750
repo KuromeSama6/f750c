@@ -12,11 +12,22 @@
 _start:
     stackalloc 32
 
+    mov a32, &const SomeNumber
+    mov a32, &SomeString
+    mov a32, &LoopString
+    mov a32, &DangerousConstant
+    mov a32, &foo
+    mov a32, &bar
+    mov a32, &magic
+    mov a32, &const Arg0
+    mov a32, &const Arg1
+
     mov a32, 1
     mov b32, &const SomeNumber
     add c32, 5
     mov d32, &foo
     mov &foo, a32
+    mov &SomeString, 5
     mov a64, _start
 
     mov &sp64, magic
@@ -40,22 +51,22 @@ _start:
         mov b64, 0
     @end
 
-    @if b64, &const DangerousConstant, je
+    @if b64, &const SomeNumber, je
         mov a64, 50
         mov b64, &foo
-        @engcall #SomeEngineCall, &const DangerousConstant, b8
+        @engcall #SomeEngineCall, &const SomeNumber, b8
 
-        @if b64, &const DangerousConstant, je
+        @if b64, &const SomeNumber, je
             mov a64, 50
             mov b64, &foo
-            @engcall #SomeEngineCall, &const DangerousConstant, b8
+            @engcall #SomeEngineCall, &const SomeNumber, b8
         @end
 
-    @elseif c64, &const DangerousConstant, je
+    @elseif c64, &const SomeNumber, je
         mov a64, 100
         mov b64, &foo
         @engcall #SomeEngineCall, &const SomeNumber, b8
-    @elseif d64, &const DangerousConstant, je
+    @elseif d64, &const SomeNumber, je
         mov a64, 150
         mov b64, &foo
         @engcall #SomeEngineCall, &const SomeNumber, b8

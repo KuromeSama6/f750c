@@ -5,7 +5,7 @@ use std::mem;
 use log::warn;
 use thiserror::Error;
 use crate::opcode::{CompilerConstruct, OpcodeMnemonic, Register};
-use crate::semantic::{SemanticCompilerConstruct, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticInstruction, SemanticOperand, SemanticRepr, SemanticReprStream, SemanticSymbol};
+use crate::semantic::{SemanticCompilerConstruct, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticInstruction, SemanticOperand, SemanticRepr, SemanticReprStream, SemanticSource, SemanticSymbol};
 use crate::{tokenizer, util};
 use crate::value::{RegisterSpec};
 
@@ -115,7 +115,7 @@ struct BlockConstructConditional {
 }
 
 impl BlockConstructConditional {
-    fn parse(source: &[SemanticRepr], source_line: usize, construct: &SemanticCompilerConstruct) -> Result<(Self, usize), ConstructExpansionErrorDetails> {
+    fn parse(source: &SemanticSource, source_line: usize, construct: &SemanticCompilerConstruct) -> Result<(Self, usize), ConstructExpansionErrorDetails> {
         Self::validate_statement_args(&construct.operands)
             .map_err(|e| e.into_details(&SemanticRepr::CompilerConstruct(construct.clone()), source_line))?;
 
@@ -380,7 +380,7 @@ impl ConditionalBlockBuilder {
     }
 }
 
-pub fn expand_construct_source(source: &[SemanticRepr]) -> Result<Vec<SemanticRepr>, ConstructExpansionErrorDetails> {
+pub fn expand_construct_source(source: &SemanticSource) -> Result<Vec<SemanticRepr>, ConstructExpansionErrorDetails> {
     let mut ret = Vec::with_capacity(source.len());
     let mut data_section = false;
     let mut i = 0usize;
@@ -436,7 +436,7 @@ pub fn expand_construct_source(source: &[SemanticRepr]) -> Result<Vec<SemanticRe
     Ok(ret)
 }
 
-fn parse_block_body(source: &[SemanticRepr], source_line: usize, construct: &SemanticCompilerConstruct) -> Result<(BlockConstruct, usize), ConstructExpansionErrorDetails> {
+fn parse_block_body(source: &SemanticSource, source_line: usize, construct: &SemanticCompilerConstruct) -> Result<(BlockConstruct, usize), ConstructExpansionErrorDetails> {
     match construct.opcode {
         CompilerConstruct::If => {
             let (block, offset) = BlockConstructConditional::parse(source, source_line, construct)?;

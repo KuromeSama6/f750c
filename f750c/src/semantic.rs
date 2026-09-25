@@ -33,6 +33,8 @@ impl Display for SemanticRepr {
     }
 }
 
+pub type SemanticSource = [SemanticRepr];
+
 /// Represents the semantic definition of a binding.
 #[derive(Debug, Clone)]
 pub struct SemanticBindingDef {
@@ -44,6 +46,14 @@ pub struct SemanticBindingDef {
     /// 
     /// For instance, the binding values `"Hello, World!", 0` would be represented as a sequence of bytes (representing "Hello, World!"), followed by a single byte `0x00`.
     pub values: Vec<SemanticLiteral>,
+}
+
+impl SemanticBindingDef {
+    pub fn total_size(&self) -> usize {
+        self.values.iter()
+            .map(|c| c.size())
+            .sum()
+    }
 }
 
 impl Display for SemanticBindingDef {
@@ -69,7 +79,8 @@ impl Display for SemanticBindingDef {
 ///
 /// Note that semantic literals are different from [`DataType`]s in that they represent actual literal values written in the source code, which allows string literals to be present.
 #[derive(Debug, Clone)]
-pub enum SemanticLiteral {
+pub enum
+SemanticLiteral {
     UntypedInteger(i64),
     UntypedFloating(f64),
     Typed(DataTypeLiteral),
@@ -77,6 +88,15 @@ pub enum SemanticLiteral {
 }
 
 impl SemanticLiteral {
+    pub fn size(&self) -> usize {
+        match self {
+            SemanticLiteral::UntypedInteger(_) => DataType::Qword.size(),
+            SemanticLiteral::UntypedFloating(_) => DataType::Double.size(),
+            SemanticLiteral::Typed(t) => t.size(),
+            SemanticLiteral::String(s) => s.len(),
+        }
+    }
+
     pub fn to_data_type(&self) -> DataTypeLiteral {
         match self {
             SemanticLiteral::UntypedInteger(i) => DataTypeLiteral::Qword(*i as u64),
@@ -209,6 +229,12 @@ pub enum SemanticImmediateType {
     ConstDerefBinding(SemanticSymbol),
 }
 
+impl SemanticImmediateType {
+    pub fn from_u64_untyped(value: u64) -> Self {
+        SemanticImmediateType::Literal(SemanticLiteral::UntypedInteger(value as i64))
+    }
+}
+
 impl Display for SemanticImmediateType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -255,19 +281,26 @@ impl Display for SemanticDerefKind {
         match self {
             SemanticDerefKind::Binding(binding) => write!(f, "&{}", binding),
             SemanticDerefKind::Register(reg) => write!(f, "&{}", reg),
-            SemanticDerefKind::Address(addr) => write!(f, "&0x{:X}", addr),
+            SemanticDerefKind::Address(addr) => write!(f, "&0x{:x}", addr),
         }
     }
 }
 
 /// Represents a semantic symbol, which consists of a name and an optional namespace. Semantic symbols are used to represent the name of labels and bindings.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SemanticSymbol {
     pub name: String,
     pub namespace: Option<String>,
 }
 
 impl SemanticSymbol {
+    pub fn new(name: &str, namespace: Option<&str>) -> Self {
+        Self {
+            name: name.to_string(),
+            namespace: namespace.map(|c| c.to_string()),
+        }
+    }
+
     pub fn format_offset(&self, offset: i64) -> String {
         if offset == 0 {
             format!("{}", self)
@@ -275,6 +308,17 @@ impl SemanticSymbol {
             format!("{}+{}", self, offset)
         } else {
             format!("{}-{}", self, -offset)
+        }
+    }
+
+    pub fn with_current_module(&self, current_module: &str) -> Self {
+        if self.namespace.is_none() {
+            Self {
+                name: self.name.clone(),
+                namespace: Some(current_module.to_string()),
+            }
+        } else {
+            self.clone()
         }
     }
 }
@@ -305,7 +349,7 @@ pub struct SemanticReprStream {
 }
 
 impl SemanticReprStream {
-    pub fn from(lines: &[SemanticRepr]) -> Self {
+    pub fn from(lines: &SemanticSource) -> Self {
         Self {
             lines: lines.to_vec(),
             cur: 0,

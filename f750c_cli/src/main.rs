@@ -1,13 +1,17 @@
 mod logging;
+mod util;
 
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::{self, Write};
+use std::mem::replace;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use clap::Parser;
 use log::{error, info};
-use f750c::{bytecode, CompileOptions};
+use walkdir::WalkDir;
+use f750c::{bytecode, CompilerInput, CompileResult};
 
 #[derive(Debug, Clone, Parser)]
 #[command(author, version, name = "f750c")]
@@ -35,20 +39,16 @@ fn main() {
 
     info!("Input path: {:?}", cli.input_path);
 
-    let content = match fs::read_to_string(&cli.input_path) {
-        Ok(content) => content,
+    let input = match read_compiler_input(&cli.input_path) {
+        Ok(input) => input,
         Err(err) => {
-            error!("Error reading input file: {err}");
+            error!("Error reading compiler input: {err}");
             return;
         }
     };
 
-    let lines = content.lines()
-        .into_iter()
-        .collect::<Vec<_>>();
-
     let sw = Instant::now();
-    let output = match f750c::compile_source(&lines, CompileOptions::default()) {
+    let output = match f750c::compile_source(input) {
         Ok(output) => output,
         Err(err) => {
             error!("{err}");
@@ -123,4 +123,71 @@ fn main() {
     }
 
     info!("Compile Successful ({:.3?}s)", start_time.elapsed().as_secs_f64());
+}
+
+fn read_compiler_input(path: &PathBuf) -> CompileResult<CompilerInput> {
+    let mut map = HashMap::new();
+    let module_name = path.file_stem().unwrap()
+        .to_string_lossy()
+        .to_string();
+
+    if !path.is_dir() {
+        let content: Vec<String> = fs::read_to_string(path)?
+            .lines()
+            .map(|c| c.to_string())
+            .collect();
+        map.insert(module_name.clone(), content);
+
+        return Ok(CompilerInput {
+            sources: map,
+            module_name,
+        });
+    }
+
+    for entry in WalkDir::new(path) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                error!("Error reading directory entry: {e}");
+                continue;
+            }
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let entry_path = entry.path();
+        let Some(relative) = util::get_relative_path(path, entry_path) else {
+            error!("Error getting relative path for entry: {:?}", entry_path);
+            continue;
+        };
+
+        let Some(extension) = relative.extension()
+            .map(|s| s.to_string_lossy().to_string()) else {
+            continue;
+        };
+
+        if extension != "f750" {
+            continue;
+        }
+
+        let relative = relative
+            .to_string_lossy()
+            .to_string()
+            .replace(&format!(".{}", extension), "")
+            .replace("\\", ".");
+
+        let relative_path_str = format!("{}.{}", module_name, relative);
+        let content: Vec<String> = fs::read_to_string(entry_path)?
+            .lines()
+            .map(|c| c.to_string())
+            .collect();
+
+        map.insert(relative_path_str, content);
+    }
+
+    Ok(CompilerInput {
+        sources: map,
+        module_name,
+    })
 }

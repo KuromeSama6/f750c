@@ -67,6 +67,17 @@ impl DataType {
     pub fn is_floating_point(&self) -> bool {
         matches!(self, DataType::Float | DataType::Double)
     }
+
+    pub fn size(&self) -> usize {
+        match self {
+            DataType::Byte => 1,
+            DataType::Word => 2,
+            DataType::Dword => 4,
+            DataType::Qword => 8,
+            DataType::Float => 4,
+            DataType::Double => 8,
+        }
+    }
 }
 
 impl From<DataTypeLiteral> for DataType {
@@ -96,6 +107,10 @@ pub enum DataTypeLiteral {
 }
 
 impl DataTypeLiteral {
+    pub fn size(&self) -> usize {
+        self.data_type().size()
+    }
+
     pub fn data_type(&self) -> DataType {
         (*self).into()
     }
