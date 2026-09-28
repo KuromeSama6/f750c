@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use log::{debug, info};
 use thiserror::Error;
 use crate::bytecode::{BytecodeSerialize, BytecodeStream};
-use crate::compiler::{BindingTable, LabelTable};
+use crate::compiler::{BindingTable, EngCallTable, LabelTable};
 use crate::construct::ConstructExpansionErrorDetails;
 use crate::encode::{InstructionEncodeContext, InstructionEncodeError};
 use crate::parser::{ParseError, ParseErrorDetails};
@@ -75,9 +75,12 @@ pub fn compile_source(input: CompilerInput) -> CompileResult<CompilerOutput> {
     // binding table
     binding_table.serialize(&mut bytecode_stream);
 
-    let label_table = LabelTable::parse(&semantic_lines)?;
+    let label_table = LabelTable::parse_and_lower(&mut semantic_lines)?;
     label_table.serialize(&mut bytecode_stream);
 
+    let engcall_table = EngCallTable::parse(&semantic_lines)?;
+    engcall_table.serialize(&mut bytecode_stream);
+    
     // extract instructions
     let semantic_lines_c = semantic_lines.clone();
 
@@ -93,6 +96,7 @@ pub fn compile_source(input: CompilerInput) -> CompileResult<CompilerOutput> {
     let ctx = InstructionEncodeContext {
         binding_table,
         label_table,
+        engcall_table,
     };
 
     let sw = Instant::now();

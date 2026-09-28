@@ -291,6 +291,17 @@ impl SemanticOperand {
 
         Some(ExternalSymbolUsage::new(symbol.name.clone(), is_deref, is_const))
     }
+    
+    pub fn fully_qualify_symbols(&mut self, current_module: &str) { 
+        let symbol = match self {
+            SemanticOperand::Immediate(SemanticImmediateType::Label(s, _)) => s,
+            SemanticOperand::Immediate(SemanticImmediateType::Binding(s, _)) => s,
+            SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(s)) => s,
+            SemanticOperand::Deref(SemanticDeref { kind: SemanticDerefKind::Binding(s), .. }) => s,
+            _ => return,
+        };
+        symbol.name = symbol.name.with_current_module(current_module);
+    }
 }
 
 impl Display for SemanticOperand {

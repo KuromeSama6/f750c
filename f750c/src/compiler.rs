@@ -1,12 +1,17 @@
 //! This module defines functions and logic for the bytecode emission stage of the F750 compiler.
 
 use std::collections::HashMap;
+use std::fmt::Debug;
 use indexmap::IndexMap;
 use thiserror::Error;
 use crate::bytecode::{BytecodeSerialize, BytecodeStream};
 use crate::semantic::{SemanticBindingDef, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticInstruction, SemanticLiteral, SemanticOperand, SemanticRepr, SemanticSource, SemanticSymbol};
 use crate::tokenizer;
 use crate::value::SymbolName;
+
+pub trait SymbolTable: Debug {
+    fn get_symbol_ident(&self, symbol: &SymbolName) -> Option<u64>;
+}
 
 #[derive(Debug, Error)]
 pub enum CompilerError {
@@ -26,6 +31,13 @@ pub struct BindingTable {
     tentative_entries: HashMap<SymbolName, SemanticBindingDef>,
     counter: usize,
     const_deref_map: HashMap<SymbolName, bool>,
+}
+
+impl SymbolTable for BindingTable {
+    fn get_symbol_ident(&self, symbol: &SymbolName) -> Option<u64> {
+        self.entries.get_index_of(symbol)
+            .map(|i| i as u64)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +275,9 @@ impl BindingTable {
             };
 
             for operand in instruction.operands.iter_mut() {
+                // replace with fully qualified symbol names
+                operand.fully_qualify_symbols(module_name);
+
                 if let SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol)) = operand {
                     let symbol = symbol.name.with_current_module(module_name);
                     // inline the binding's value
@@ -376,7 +391,7 @@ impl BytecodeSerialize for BindingTable {
             }
 
             stream.write_u8(flag);
-            stream.write_varint64(i as u64);
+            stream.write_varint64(self.get_symbol_ident(symbol).unwrap());
             if write_namespace {
                 stream.write_cstr(namespace);
             }
@@ -408,6 +423,13 @@ pub struct LabelTable {
     entries: IndexMap<SymbolName, LabelTableEntry>,
 }
 
+impl SymbolTable for LabelTable {
+    fn get_symbol_ident(&self, symbol: &SymbolName) -> Option<u64> {
+        self.entries.get_index_of(symbol)
+            .map(|i| i as u64)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LabelTableEntry {
     symbol: SemanticSymbol,
@@ -415,12 +437,12 @@ struct LabelTableEntry {
 }
 
 impl LabelTable {
-    pub fn parse(lines: &IndexMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
+    pub fn parse_and_lower(lines: &mut IndexMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
         let mut entries = IndexMap::new();
         let mut addr_counter = 0u64;
 
         // parse
-        for (module_name, source) in lines {
+        for (module_name, source) in lines.iter() {
             for line in source {
                 match line {
                     SemanticRepr::Label(symbol) => {
@@ -444,10 +466,12 @@ impl LabelTable {
         }
 
         // lower
-        for (module_name, source) in lines {
+        for (module_name, source) in lines.iter_mut() {
             for line in source {
                 if let SemanticRepr::Instruction(instruction) = line {
-                    for operand in &instruction.operands {
+                    for operand in instruction.operands.iter_mut() {
+                        operand.fully_qualify_symbols(module_name);
+
                         // external label discovery
                         if operand.is_label() && let Some(external) = operand.get_external_symbol() {
                             if !entries.contains_key(&external.name) {
@@ -503,7 +527,7 @@ impl BytecodeSerialize for LabelTable {
             }
 
             stream.write_u8(flag);
-            stream.write_varint64(i as u64);
+            stream.write_varint64(self.get_symbol_ident(symbol).unwrap());
             if write_namespace {
                 stream.write_cstr(namespace);
             }
@@ -513,6 +537,67 @@ impl BytecodeSerialize for LabelTable {
             if !entry.symbol.external {
                 stream.write_varint64(entry.addr);
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EngCallTable {
+    pub entries: HashMap<String, u64>,
+}
+
+impl EngCallTable {
+    pub fn new() -> Self {
+        EngCallTable {
+            entries: HashMap::new(),
+        }
+    }
+
+    pub fn parse(lines: &IndexMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
+        let mut entries = HashMap::new();
+        let mut count = 0u64;
+
+        for (module_name, source) in lines {
+            for line in source {
+                let SemanticRepr::Instruction(instruction) = line else {
+                    continue;
+                };
+
+                for operand in &instruction.operands {
+                    if let SemanticOperand::EngineParam(param) = operand {
+                        if !entries.contains_key(param) {
+                            entries.insert(param.clone(), count);
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            entries,
+        })
+    }
+
+    pub fn get(&self, name: &str) -> Option<u64> {
+        self.entries.get(name).copied()
+    }
+}
+
+impl BytecodeSerialize for EngCallTable {
+    fn serialize(&self, stream: &mut BytecodeStream) {
+        let mut entries: Vec<(&String, &u64)> = self.entries.iter().collect();
+        entries.sort_by(|a, b| a.1.cmp(b.1));
+
+        for (i, (name, id)) in entries.iter().enumerate() {
+            let mut flag = 0u8;
+            if i == entries.len() - 1 {
+                flag |= 1 << 0;
+            }
+
+            stream.write_u8(flag);
+            stream.write_varint64(**id);
+            stream.write_cstr(name);
         }
     }
 }

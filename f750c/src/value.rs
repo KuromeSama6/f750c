@@ -1,10 +1,12 @@
 //! This module defines the data types and commonly used compound types in the F750 language.
 
 use std::fmt::{Display, Formatter};
+use std::ops::Deref;
 use std::str::FromStr;
 use strum::{AsRefStr, Display, EnumString, FromRepr};
 use thiserror::Error;
-use crate::bytecode::BytecodeSerialize;
+use crate::bytecode::{BytecodeSerialize, BytecodeSerializeError, BytecodeSerializeResult, BytecodeStream};
+use crate::compiler::{BindingTable, SymbolTable};
 use crate::opcode::Register;
 use crate::parser::{ParseErrorDetails, ParseError, ParseResult};
 use crate::parser::ParseError::InvalidRegisterSpec;
@@ -14,25 +16,26 @@ use crate::semantic::{SemanticLiteral, SemanticSymbol};
 /// 
 /// All integer data types are unsigned in their representation, but can be used to represent signed values in two's complement form.
 #[derive(Debug, Clone, Copy, PartialEq, AsRefStr, EnumString, Display)]
+#[repr(u8)]
 pub enum DataType {
     /// Represents an 8-bit unsigned integer.
     #[strum(serialize = "byte")]
-    Byte,
+    Byte = 1,
     /// Represents a 16-bit unsigned integer.
     #[strum(serialize = "word")]
-    Word,
+    Word = 2,
     /// Represents a 32-bit unsigned integer.
     #[strum(serialize = "dword")]
-    Dword,
+    Dword = 3,
     /// Represents a 64-bit unsigned integer.
     #[strum(serialize = "qword")]
-    Qword,
+    Qword = 4,
     /// Represents a 32-bit IEEE-754 floating point number.
     #[strum(serialize = "float")]
-    Float,
+    Float = 5,
     /// Represents a 64-bit IEEE-754 floating point number.
     #[strum(serialize = "double")]
-    Double,
+    Double = 6,
 }
 
 impl DataType {
@@ -150,14 +153,15 @@ impl From<SemanticLiteral> for DataTypeLiteral {
 }
 
 impl BytecodeSerialize for DataTypeLiteral {
-    fn serialize(&self, stream: &mut crate::bytecode::BytecodeStream) {
+    fn serialize(&self, stream: &mut BytecodeStream) {
+        stream.write_u8(self.data_type().size() as u8);
         match self {
             DataTypeLiteral::Byte(v) => stream.write_u8(*v),
-            DataTypeLiteral::Word(v) => stream.write_u16(*v),
-            DataTypeLiteral::Dword(v) => stream.write_u32(*v),
+            DataTypeLiteral::Word(v) => stream.write_varint64(*v as u64),
+            DataTypeLiteral::Dword(v) => stream.write_varint64(*v as u64),
             DataTypeLiteral::Qword(v) => stream.write_u64(*v),
-            DataTypeLiteral::Float(v) => stream.write_f32(*v),
-            DataTypeLiteral::Double(v) => stream.write_f64(*v),
+            DataTypeLiteral::Float(v) => stream.write_varint64(*v as u64),
+            DataTypeLiteral::Double(v) => stream.write_varint64(*v as u64),
         }
     }
 }
@@ -215,6 +219,28 @@ impl RegisterSpec {
 impl Display for RegisterSpec {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}{}", self.register.as_ref(), self.width.as_ref())
+    }
+}
+
+impl BytecodeSerialize for RegisterSpec {
+    fn serialize(&self, stream: &mut BytecodeStream) {
+        // least 6 bits: register family
+        // next 2 bits: register width
+
+        let register = self.register as u8;
+        if register > 0b0011_1111 {
+            panic!("Register family value out of range: {}", register);
+        }
+
+        let width = match self.width {
+            RegisterWidth::Byte => 0b00,
+            RegisterWidth::Word => 0b01,
+            RegisterWidth::Dword => 0b10,
+            RegisterWidth::Qword => 0b11,
+        };
+
+        let value = (width << 6) | register;
+        stream.write_u8(value);
     }
 }
 
@@ -308,5 +334,62 @@ impl Display for SymbolName {
         } else {
             write!(f, "{}", self.name)
         }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SymbolRef {
+    pub name: SymbolName,
+    pub offset: i64,
+}
+
+impl SymbolRef {
+    pub fn new(name: SymbolName, offset: i64) -> Self {
+        Self {
+            name,
+            offset,
+        }
+    }
+
+    pub fn format_offset(&self) -> String {
+        self.name.format_offset(self.offset)
+    }
+
+    pub fn bytecode_serialize(&self, stream: &mut BytecodeStream, table: &impl SymbolTable) -> BytecodeSerializeResult<()> {
+        let symbol_id = table.get_symbol_ident(&self.name)
+            .ok_or_else(|| BytecodeSerializeError::UnknownSymbol(self.clone()))?;
+        stream.write_varint64(symbol_id);
+        stream.write_varint64(self.offset as u64);
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DerefType {
+    Binding(SymbolRef),
+    Addr(u64),
+    Register(RegisterSpec, i64),
+}
+
+impl DerefType {
+    pub fn bytecode_serialize(&self, stream: &mut BytecodeStream, binding_table: &BindingTable) -> BytecodeSerializeResult<()> {
+        match self {
+            DerefType::Binding(symbol) => {
+                stream.write_u8(0x01);
+                symbol.bytecode_serialize(stream, binding_table)?;
+            }
+            DerefType::Addr(addr) => {
+                stream.write_u8(0x02);
+                stream.write_u64(*addr);
+            }
+            DerefType::Register(reg_spec, offset) => {
+                stream.write_u8(0x03);
+                reg_spec.serialize(stream);
+                stream.write_varint64(*offset as u64);
+            }
+        }
+
+        Ok(())
     }
 }

@@ -1,6 +1,8 @@
 //! Bytecode file format constants and utilities.
 
+use thiserror::Error;
 use crate::opcode::Opcode;
+use crate::value::SymbolRef;
 
 /// Bytecode file format Magic Number.
 pub const F750_MAGIC: u32 = 0xF7_50_07_21;
@@ -10,6 +12,15 @@ pub const F750_VERSION: u32 = 1;
 pub trait BytecodeSerialize {
     fn serialize(&self, stream: &mut BytecodeStream);
 }
+
+#[derive(Debug, Error)]
+pub enum BytecodeSerializeError {
+    #[error("Unknown symbol reference: {0:?}")]
+    UnknownSymbol(SymbolRef),
+    #[error("Unknown engine parameter: {0}")]
+    UnknownEngineParameter(String),
+}
+pub type BytecodeSerializeResult<T> = Result<T, BytecodeSerializeError>;
 
 #[derive(Debug)]
 pub struct BytecodeStream {
