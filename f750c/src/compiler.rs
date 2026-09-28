@@ -4,28 +4,14 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use thiserror::Error;
 use crate::bytecode::{BytecodeSerialize, BytecodeStream};
-use crate::semantic::{SemanticBindingDef, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticLiteral, SemanticOperand, SemanticRepr, SemanticSource, SemanticSymbol};
+use crate::semantic::{SemanticBindingDef, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticInstruction, SemanticLiteral, SemanticOperand, SemanticRepr, SemanticSource, SemanticSymbol};
 use crate::tokenizer;
 use crate::value::SymbolName;
 
 #[derive(Debug, Error)]
 pub enum CompilerError {
-    #[error("Data section start not allowed here")]
-    DuplicateDataSection,
-    #[error("Binding definition found in non-data section")]
-    BindingDefInNonDataSection,
-    #[error("Duplicate binding definition: {0}")]
-    DuplicateBindingDef(SymbolName),
-    #[error("Use of undefined binding: {0}")]
-    UndefinedBinding(SymbolName),
-    #[error("Constant dereference of a binding with multiple values is not allowed: {0}")]
-    ConstDerefWithMultipleValues(SymbolName),
-    #[error("Constant dereference of a dynamic binding is not allowed: '{0}'. Either use dynamic dereference (&binding) or mark the binding as constant (const binding: ...).")]
-    ConstDerefOfNonConstantBinding(SymbolName),
-    #[error("Constant dereference (&const binding) of a constant binding '{0}' occured, but this binding was previously dynamically dereferenced (&binding) or directly accessed (binding).")]
-    MixedConstDerefOfConstantBinding(SymbolName),
-    #[error("Dynamic dereference (&binding) or direct access (binding) of a constant binding '{0}' occured, but this binding was previously constantly dereferenced (&const binding).")]
-    MixedDynamicDerefOfConstantBinding(SymbolName),
+    #[error("Binding table error: {0}")]
+    BindingTable(#[from] BindingTableError),
 
     #[error("Duplicate label definition: {0}")]
     DuplicateLabel(SymbolName),
@@ -56,6 +42,29 @@ pub enum BindingAllocationType {
     Static(usize),
 }
 
+#[derive(Debug, Error)]
+pub enum BindingTableError {
+    #[error("Data section start not allowed here")]
+    DuplicateDataSection,
+    #[error("Binding definition found in non-data section")]
+    BindingDefInNonDataSection,
+    #[error("Duplicate binding definition: {0}")]
+    DuplicateBindingDef(SymbolName),
+    #[error("Use of undefined binding: {0}")]
+    UndefinedBinding(SymbolName),
+    #[error("Constant dereference of a binding with multiple values is not allowed: {0}")]
+    ConstDerefWithMultipleValues(SymbolName),
+    #[error("Constant dereference of a dynamic binding is not allowed: '{0}'. Either use dynamic dereference (&binding) or mark the binding as constant (const binding: ...).")]
+    ConstDerefOfNonConstantBinding(SymbolName),
+    #[error("Constant dereference (&const binding) of a constant binding '{0}' occured, but this binding was previously dynamically dereferenced (&binding) or directly accessed (binding).")]
+    MixedConstDerefOfConstantBinding(SymbolName),
+    #[error("Dynamic dereference (&binding) or direct access (binding) of a constant binding '{0}' occured, but this binding was previously constantly dereferenced (&const binding).")]
+    MixedDynamicDerefOfConstantBinding(SymbolName),
+    #[error("Invalid external access of binding: {0}. External bindings must be accessed with 'extern', and local bindings must be accessed without 'extern'.")]
+    InvalidExternAccess(SymbolName),
+}
+pub type BindingTableResult<T> = Result<T, BindingTableError>;
+
 impl BindingTable {
     pub fn new() -> Self {
         BindingTable {
@@ -85,13 +94,13 @@ impl BindingTable {
         Ok(ret)
     }
     
-    fn preprocess_bindings(&mut self, source: &SemanticSource, module_name: &str) -> CompileResult<()> {
+    fn preprocess_bindings(&mut self, source: &SemanticSource, module_name: &str) -> BindingTableResult<()> {
         for line in source {
             match line {
                 SemanticRepr::BindingDef(def) => {
                     let symbol = SymbolName::new(&def.name, Some(module_name));
                     if self.entries.contains_key(&symbol) {
-                        return Err(CompilerError::DuplicateBindingDef(symbol));
+                        return Err(BindingTableError::DuplicateBindingDef(symbol));
                     }
 
                     self.tentative_entries.insert(symbol.clone(), def.clone());
@@ -99,12 +108,15 @@ impl BindingTable {
                 SemanticRepr::Instruction(instruction) => {
                     for operand in &instruction.operands {
                         // external symbol discovery
-                        if let Some(external_symbol) = operand.get_external_symbol() {
+                        let mut is_external_access = false;
+                        if operand.is_binding() && let Some(external_symbol) = operand.get_external_symbol() {
                             let def = SemanticBindingDef {
                                 name: external_symbol.name.to_string(),
-                                constant: false,
+                                constant: external_symbol.is_const,
+                                public: false,
                                 values: vec![],
                             };
+                            is_external_access = true;
 
                             if !self.entries.contains_key(&external_symbol.name) {
                                 self.tentative_entries.insert(external_symbol.name.clone(), def.clone());
@@ -114,6 +126,10 @@ impl BindingTable {
                                     alloc: BindingAllocationType::Extern,
                                 };
                                 self.entries.insert(external_symbol.name.clone(), entry);
+
+                                if external_symbol.is_deref {
+                                    self.const_deref_map.insert(external_symbol.name, external_symbol.is_const);
+                                }
                             }
                         }
 
@@ -121,7 +137,11 @@ impl BindingTable {
                             SemanticOperand::Immediate(SemanticImmediateType::Binding(symbol, offset)) => {
                                 let symbol = symbol.name.with_current_module(module_name);
                                 if let Some(is_const) = self.const_deref_map.get(&symbol) && *is_const {
-                                    return Err(CompilerError::MixedDynamicDerefOfConstantBinding(symbol));
+                                    return Err(BindingTableError::MixedDynamicDerefOfConstantBinding(symbol));
+                                }
+
+                                if !self.ensure_valid_external_ref(&symbol, is_external_access) {
+                                    return Err(BindingTableError::InvalidExternAccess(symbol));
                                 }
 
                                 let entry = self.get_tentative_entry_or_err(&symbol)?;
@@ -133,7 +153,11 @@ impl BindingTable {
                                 if let SemanticDerefKind::Binding(symbol) = &deref.kind {
                                     let symbol = symbol.name.with_current_module(module_name);
                                     if let Some(is_const) = self.const_deref_map.get(&symbol) && *is_const {
-                                        return Err(CompilerError::MixedDynamicDerefOfConstantBinding(symbol));
+                                        return Err(BindingTableError::MixedDynamicDerefOfConstantBinding(symbol));
+                                    }
+
+                                    if !self.ensure_valid_external_ref(&symbol, is_external_access) {
+                                        return Err(BindingTableError::InvalidExternAccess(symbol));
                                     }
 
                                     let entry = self.get_tentative_entry_or_err(&symbol)?;
@@ -145,17 +169,27 @@ impl BindingTable {
                             SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol)) => {
                                 let symbol = symbol.name.with_current_module(module_name);
                                 if let Some(is_const) = self.const_deref_map.get(&symbol) && !is_const {
-                                    return Err(CompilerError::MixedConstDerefOfConstantBinding(symbol));
+                                    return Err(BindingTableError::MixedConstDerefOfConstantBinding(symbol));
+                                }
+
+                                if !self.ensure_valid_external_ref(&symbol, is_external_access) {
+                                    return Err(BindingTableError::InvalidExternAccess(symbol));
                                 }
 
                                 // inline the binding's value
                                 let entry = self.get_tentative_entry_or_err(&symbol)?;
+
+                                // external check
+                                if let Some(entry) = self.entries.get(&symbol) && matches!(entry.alloc, BindingAllocationType::Extern) {
+                                    continue;
+                                }
+
                                 if entry.values.len() != 1 {
-                                    return Err(CompilerError::ConstDerefWithMultipleValues(symbol));
+                                    return Err(BindingTableError::ConstDerefWithMultipleValues(symbol));
                                 }
 
                                 if !entry.constant {
-                                    return Err(CompilerError::ConstDerefOfNonConstantBinding(symbol));
+                                    return Err(BindingTableError::ConstDerefOfNonConstantBinding(symbol));
                                 }
                                 self.const_deref_map.insert(symbol, true);
                             }
@@ -170,7 +204,7 @@ impl BindingTable {
         Ok(())
     }
 
-    fn append_bindings(&mut self, source: &SemanticSource, module_name: &str) -> CompileResult<()> {
+    fn append_bindings(&mut self, source: &SemanticSource, module_name: &str) -> BindingTableResult<()> {
         let mut section_open = false;
 
         for (i, line) in source.iter().enumerate() {
@@ -178,7 +212,7 @@ impl BindingTable {
                 SemanticRepr::SpecialSection(label) => {
                     if label == tokenizer::SPECIAL_SECTION_LABEL_DATA {
                         if section_open {
-                            return Err(CompilerError::DuplicateDataSection);
+                            return Err(BindingTableError::DuplicateDataSection);
                         }
 
                         section_open = true;
@@ -189,16 +223,16 @@ impl BindingTable {
                 }
                 SemanticRepr::BindingDef(def) => {
                     if !section_open {
-                        return Err(CompilerError::BindingDefInNonDataSection);
+                        return Err(BindingTableError::BindingDefInNonDataSection);
                     }
 
                     let symbol = SymbolName::new(&def.name, Some(module_name));
 
                     if self.entries.contains_key(&symbol) {
-                        return Err(CompilerError::DuplicateBindingDef(symbol));
+                        return Err(BindingTableError::DuplicateBindingDef(symbol));
                     }
 
-                    let alloc = if !self.can_inline(&symbol) {
+                    let alloc = if !self.can_inline(&symbol, def) {
                         let value = self.counter;
                         self.counter += def.total_size();
                         BindingAllocationType::Static(value)
@@ -233,6 +267,12 @@ impl BindingTable {
                     let symbol = symbol.name.with_current_module(module_name);
                     // inline the binding's value
                     let entry = self.get_entry_or_err(&symbol)?;
+
+                    // external check
+                    if let Some(entry) = self.entries.get(&symbol) && matches!(entry.alloc, BindingAllocationType::Extern) {
+                        continue;
+                    }
+
                     let value = &entry.values[0];
 
                     *operand = SemanticOperand::Immediate(SemanticImmediateType::Literal(value.clone()));
@@ -251,9 +291,9 @@ impl BindingTable {
             })
     }
 
-    pub fn get_offset_or_err(&self, symbol: &SymbolName) -> CompileResult<Option<usize>> {
+    pub fn get_offset_or_err(&self, symbol: &SymbolName) -> BindingTableResult<Option<usize>> {
         self.get_offset(symbol)
-            .ok_or_else(|| CompilerError::UndefinedBinding(symbol.clone()))
+            .ok_or_else(|| BindingTableError::UndefinedBinding(symbol.clone()))
     }
 
     pub fn get_entry(&self, symbol: &SymbolName) -> Option<&SemanticBindingDef> {
@@ -261,25 +301,40 @@ impl BindingTable {
             .map(|c| &c.def)
     }
 
-    pub fn get_entry_or_err(&self, symbol: &SymbolName) -> CompileResult<&SemanticBindingDef> {
+    pub fn get_entry_or_err(&self, symbol: &SymbolName) -> BindingTableResult<&SemanticBindingDef> {
         self.get_entry(symbol)
-            .ok_or_else(|| CompilerError::UndefinedBinding(symbol.clone()))
+            .ok_or_else(|| BindingTableError::UndefinedBinding(symbol.clone()))
     }
 
     fn get_tentative_entry(&self, symbol: &SymbolName) -> Option<&SemanticBindingDef> {
         self.tentative_entries.get(symbol)
     }
 
-    fn get_tentative_entry_or_err(&self, symbol: &SymbolName) -> CompileResult<&SemanticBindingDef> {
+    fn get_tentative_entry_or_err(&self, symbol: &SymbolName) -> BindingTableResult<&SemanticBindingDef> {
         self.get_tentative_entry(symbol)
-            .ok_or_else(|| CompilerError::UndefinedBinding(symbol.clone()))
+            .ok_or_else(|| BindingTableError::UndefinedBinding(symbol.clone()))
     }
 
-    fn can_inline(&self, symbol: &SymbolName) -> bool {
+    fn can_inline(&self, symbol: &SymbolName, def: &SemanticBindingDef) -> bool {
+        if def.public {
+            return false;
+        }
+
         if let Some(b) = self.const_deref_map.get(symbol) && *b {
             return true;
         }
-        false
+
+        def.constant
+    }
+
+    fn ensure_valid_external_ref(&self, name: &SymbolName, extern_access: bool) -> bool {
+        let Some(entry) = self.entries.get(name) else {
+            // this has to be a non-external access
+            return !extern_access;
+        };
+
+        let is_extern = matches!(entry.alloc, BindingAllocationType::Extern);
+        is_extern == extern_access
     }
 }
 
@@ -289,6 +344,10 @@ impl BytecodeSerialize for BindingTable {
         let mut current_namespace: Option<&str> = None;
 
         for (i, (symbol, entry)) in self.entries.iter().enumerate() {
+            if matches!(entry.alloc, BindingAllocationType::Inline) {
+                continue;
+            }
+
             entries.push((symbol, entry));
 
             let mut flag = 0u8;
@@ -310,6 +369,10 @@ impl BytecodeSerialize for BindingTable {
             if write_namespace {
                 flag |= 1 << 3;
                 current_namespace = Some(namespace);
+            }
+
+            if entry.def.public {
+                flag |= 1 << 4;
             }
 
             stream.write_u8(flag);
@@ -386,7 +449,7 @@ impl LabelTable {
                 if let SemanticRepr::Instruction(instruction) = line {
                     for operand in &instruction.operands {
                         // external label discovery
-                        if let Some(external) = operand.get_external_symbol() {
+                        if operand.is_label() && let Some(external) = operand.get_external_symbol() {
                             if !entries.contains_key(&external.name) {
                                 let entry = LabelTableEntry {
                                     symbol: SemanticSymbol::new(external.name.clone(), true),

@@ -8,8 +8,9 @@ use thiserror::Error;
 use crate::bytecode::{BytecodeSerialize, BytecodeStream};
 use crate::compiler::{BindingTable, LabelTable};
 use crate::construct::ConstructExpansionErrorDetails;
+use crate::encode::{InstructionEncodeContext, InstructionEncodeError};
 use crate::parser::{ParseError, ParseErrorDetails};
-use crate::semantic::{SemanticBindingDef, SemanticRepr, SemanticSymbol};
+use crate::semantic::{SemanticBindingDef, SemanticInstruction, SemanticRepr, SemanticSymbol};
 
 pub mod opcode;
 pub mod value;
@@ -20,6 +21,7 @@ pub mod tokenizer;
 pub mod compiler;
 pub mod bytecode;
 mod construct;
+mod encode;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -33,6 +35,8 @@ pub enum Error {
     ConstructExpansion(ConstructExpansionErrorDetails),
     #[error("Compiler error: {0}")]
     Compile(#[from] compiler::CompilerError),
+    #[error("Instruction encoding error: {0}")]
+    InstructionEncode(#[from] InstructionEncodeError),
 }
 pub type CompileResult<T> = Result<T, Error>;
 
@@ -74,9 +78,30 @@ pub fn compile_source(input: CompilerInput) -> CompileResult<CompilerOutput> {
     let label_table = LabelTable::parse(&semantic_lines)?;
     label_table.serialize(&mut bytecode_stream);
 
+    // extract instructions
+    let semantic_lines_c = semantic_lines.clone();
+
+    let mut instructions: Vec<SemanticInstruction> = Vec::new();
+    for (_, lines) in semantic_lines {
+        for line in lines {
+            if let SemanticRepr::Instruction(instr) = line {
+                instructions.push(instr);
+            }
+        }
+    }
+
+    let ctx = InstructionEncodeContext {
+        binding_table,
+        label_table,
+    };
+
+    let sw = Instant::now();
+    encode::encode_instructions(&instructions, &ctx, &mut bytecode_stream)?;
+    info!("Bytecode generation took: {:.3?}", sw.elapsed().as_secs_f64());
+
     Ok(CompilerOutput {
         bytes: bytecode_stream,
-        semantic_lines: semantic_lines.into_iter().flat_map(|(_, v)| v).collect(),
+        semantic_lines: semantic_lines_c.into_iter().flat_map(|(_, v)| v).collect(),
         semantic_lines_expanded: Vec::new(),
     })
 }

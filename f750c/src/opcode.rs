@@ -336,6 +336,8 @@ pub enum ReservedWord {
     Extern,
     #[strum(serialize = "struct")]
     Alias,
+    #[strum(serialize = "pub")]
+    Public,
 }
 
 #[repr(u8)]

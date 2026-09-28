@@ -63,8 +63,6 @@ pub enum ParseError {
     OffsetNotAllowed,
     #[error("Constant dereference (&const) not valid here")]
     ConstantDerefNotAllowed,
-    #[error("Constant dereference of external binding (&const extern binding) is not allowed")]
-    ConstantDerefExternalNotAllowed,
     #[error("Memory offset on a non-dereferenced register or binding is not allowed")]
     NonDerefOffsetNotAllowed,
     #[error("Constant binding dereference (&const binding) with an offset is not allowed")]
@@ -138,32 +136,27 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRe
     if ctx == ParseLineContext::BindingDef && !is_label {
         let binding_name: String;
         let mut is_constant = false;
+        let mut is_public = false;
 
-        let first = stream.next_non_whitespace_or_err()?;
-
-        match first {
-            Token::Keyword(keyword) => {
-                if keyword == ReservedWord::Const {
-                    let name = stream.next_non_whitespace_or_err()?;
-                    if let Token::Token(s) = name {
-                        binding_name = s;
-                        is_constant = true;
-
-                    } else {
-                        return Err(ParseError::UnexpectedToken(format!("Expected an identifier for a binding definition, found {:?}", name)));
-                    }
-
-                } else {
-                    return Err(ParseError::UnexpectedToken(format!("Keyword '{}' not valid here", keyword.as_ref())));
+        while let Some(Token::Keyword(kw)) = stream.peek_non_whitespace() {
+            match kw {
+                ReservedWord::Const => {
+                    is_constant = true;
+                    stream.next_non_whitespace_or_err()?;
                 }
-            }
-            Token::Token(token) => {
-                binding_name = token;
-            }
-            _ => {
-                return Err(ParseError::UnexpectedToken(format!("Expected an identifier or a modifier at the start of a binding definition, found {:?}", first)));
+                ReservedWord::Public => {
+                    is_public = true;
+                    stream.next_non_whitespace_or_err()?;
+                }
+                _ => break,
             }
         }
+
+        let first = stream.next_non_whitespace_or_err()?;
+        let Token::Token(first) = first else {
+            return Err(ParseError::UnexpectedToken(format!("Expected an identifier for a binding definition, found {:?}", first)));
+        };
+        binding_name = first;
 
         stream.expect_non_whitespace(Token::Colon)?;
 
@@ -171,6 +164,7 @@ fn parse_line(tokens: &[Token], ctx: ParseLineContext) -> ParseResult<SemanticRe
         let ret = SemanticBindingDef {
             name: binding_name,
             constant: is_constant,
+            public: is_public,
             values,
         };
 
@@ -360,10 +354,6 @@ impl OperandsBuilder {
             if self.const_deref {
                 if self.offset != 0 {
                     return Err(ParseError::ConstantBindingDerefOffsetNotAllowed);
-                }
-
-                if symbol.external {
-                    return Err(ParseError::ConstantDerefExternalNotAllowed);
                 }
 
                 self.push_next(SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(symbol.clone())));

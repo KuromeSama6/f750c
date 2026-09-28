@@ -50,6 +50,8 @@ pub struct SemanticBindingDef {
     pub name: String,
     /// Whether this binding is a **constant binding**. The F750 compiler disallows writing to constant bindings at compile time.
     pub constant: bool,
+    /// Whether this binding is a **public binding**. Public bindings are visible to other modules and will be excluded from inlining.
+    pub public: bool,
     /// The values associated with this binding. When compiled to bytecode, all values are packed side-by-side in the order they are defined.
     /// 
     /// For instance, the binding values `"Hello, World!", 0` would be represented as a sequence of bytes (representing "Hello, World!"), followed by a single byte `0x00`.
@@ -66,6 +68,10 @@ impl SemanticBindingDef {
 
 impl Display for SemanticBindingDef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.public {
+            write!(f, "pub ")?;
+        }
+
         if self.constant {
             write!(f, "const ")?;
         }
@@ -240,20 +246,41 @@ impl SemanticOperand {
         self.is_immediate() || self.is_register()
     }
 
+    pub fn is_binding(&self) -> bool {
+        match self {
+            SemanticOperand::Immediate(SemanticImmediateType::Binding(_, _)) => true,
+            SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(_)) => true,
+            SemanticOperand::Deref(SemanticDeref { kind: SemanticDerefKind::Binding(_), .. }) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_label(&self) -> bool {
+        matches!(self, SemanticOperand::Immediate(SemanticImmediateType::Label(_, _)))
+    }
+
     pub fn get_external_symbol(&self) -> Option<ExternalSymbolUsage> {
-        let (symbol, is_deref): (SemanticSymbol, bool);
+        let (symbol, is_deref, is_const): (SemanticSymbol, bool, bool);
         match self {
             SemanticOperand::Immediate(SemanticImmediateType::Label(s, _)) => {
                 symbol = s.clone();
                 is_deref = false;
+                is_const = false;
             },
             SemanticOperand::Immediate(SemanticImmediateType::Binding(s, _)) => {
                 symbol = s.clone();
                 is_deref = false;
+                is_const = false;
+            },
+            SemanticOperand::Immediate(SemanticImmediateType::ConstDerefBinding(s)) => {
+                symbol = s.clone();
+                is_deref = true;
+                is_const = true;
             },
             SemanticOperand::Deref(SemanticDeref { kind: SemanticDerefKind::Binding(s), .. }) => {
                 symbol = s.clone();
                 is_deref = true;
+                is_const = false;
             },
             _ => return None,
         };
@@ -262,7 +289,7 @@ impl SemanticOperand {
             return None;
         }
 
-        Some(ExternalSymbolUsage::new(symbol.name.clone(), is_deref))
+        Some(ExternalSymbolUsage::new(symbol.name.clone(), is_deref, is_const))
     }
 }
 
@@ -282,13 +309,15 @@ impl Display for SemanticOperand {
 pub struct ExternalSymbolUsage {
     pub name: SymbolName,
     pub is_deref: bool,
+    pub is_const: bool,
 }
 
 impl ExternalSymbolUsage {
-    pub fn new(name: SymbolName, is_deref: bool) -> Self {
+    pub fn new(name: SymbolName, is_deref: bool, is_const: bool) -> Self {
         Self {
             name,
             is_deref,
+            is_const,
         }
     }
 }

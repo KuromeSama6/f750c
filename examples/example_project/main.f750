@@ -9,6 +9,9 @@
     const Arg0: byte 0xff
     const Arg1: byte 0xf0
 
+    pub publicVar: dword 1234
+    pub const PublicConst: dword 5678
+
 _start:
     stackalloc 32
 
@@ -31,7 +34,6 @@ _start:
     mov a64, _extern some_module::some_proc + 32
 
     mov &sp64, magic
-    mov &d64, &extern some_module::SomeNumber + 64
 
     mov a64, #EngCall.Character.Random.FloatRange
     push float -0.5
