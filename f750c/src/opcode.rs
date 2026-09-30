@@ -36,6 +36,7 @@ pub enum Opcode {
     MovRegEngineParam = 0x25,
     MovEngineParamReg = 0x26,
     MovRegLabel = 0x27,
+    MovRegBinding = 0x28,
 
     // Comparison
     CmpRegReg = 0x30,
@@ -58,6 +59,8 @@ pub enum Opcode {
     PushImm = 0x51,
     PopReg = 0x52,
     PopMem = 0x53,
+    PushLabel = 0x54,
+    PushBinding = 0x55,
 
     // Jump
     JmpReg = 0xB0,
@@ -92,6 +95,7 @@ pub enum OpcodePayload {
     MovRegEngineParam(RegisterSpec, String),
     MovEngineParamReg(String, RegisterSpec),
     MovRegLabel(RegisterSpec, SymbolRef),
+    MovRegBinding(RegisterSpec, SymbolRef),
 
     // Comparison
     CmpRegReg(RegisterSpec, RegisterSpec),
@@ -112,6 +116,8 @@ pub enum OpcodePayload {
     // Stack
     PushReg(RegisterSpec),
     PushImm(DataTypeLiteral),
+    PushLabel(SymbolRef),
+    PushBinding(SymbolRef),
     PopReg(RegisterSpec),
     PopMem(DerefType),
 
@@ -148,6 +154,8 @@ impl OpcodePayload {
             Self::MovRegEngineParam(_, _) => Opcode::MovRegEngineParam,
             Self::MovEngineParamReg(_, _) => Opcode::MovEngineParamReg,
             Self::MovRegLabel(_, _) => Opcode::MovRegLabel,
+            Self::MovRegBinding(_, _) => Opcode::MovRegBinding,
+
             Self::CmpRegReg(_, _) => Opcode::CmpRegReg,
             Self::CmpRegImm(_, _) => Opcode::CmpRegImm,
 
@@ -166,6 +174,8 @@ impl OpcodePayload {
             Self::PushImm(_) => Opcode::PushImm,
             Self::PopReg(_) => Opcode::PopReg,
             Self::PopMem(_) => Opcode::PopMem,
+            Self::PushBinding(_) => Opcode::PushBinding,
+            Self::PushLabel(_) => Opcode::PushLabel,
 
             Self::JmpReg(_, _) => Opcode::JmpReg,
             Self::JmpImm(_, _) => Opcode::JmpImm,
@@ -239,6 +249,10 @@ impl OpcodePayload {
                 reg.serialize(stream);
                 label_ref.bytecode_serialize(stream, labels)?;
             },
+            Self::MovRegBinding(reg, binding_ref) => {
+                reg.serialize(stream);
+                binding_ref.bytecode_serialize(stream, bindings)?;
+            },
             Self::CmpRegReg(reg1, reg2) => {
                 reg1.serialize(stream);
                 reg2.serialize(stream);
@@ -292,6 +306,12 @@ impl OpcodePayload {
             },
             Self::PushImm(imm) => {
                 imm.serialize(stream);
+            },
+            Self::PushLabel(label_ref) => {
+                label_ref.bytecode_serialize(stream, labels)?;
+            },
+            Self::PushBinding(binding_ref) => {
+                binding_ref.bytecode_serialize(stream, bindings)?;
             },
             Self::PopReg(reg) => {
                 reg.serialize(stream);

@@ -381,7 +381,7 @@ impl DerefType {
             }
             DerefType::Addr(addr) => {
                 stream.write_u8(0x02);
-                stream.write_u64(*addr);
+                stream.write_varint64(*addr);
             }
             DerefType::Register(reg_spec, offset) => {
                 stream.write_u8(0x03);

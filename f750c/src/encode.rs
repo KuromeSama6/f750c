@@ -206,6 +206,8 @@ fn select_opcode(mnemonic: OpcodeMnemonic, operands: &[SemanticOperand]) -> Inst
             match &operands[0] {
                 SemanticOperand::Register(reg) => Ok(OpcodePayload::PushReg(*reg)),
                 SemanticOperand::Immediate(SemanticImmediateType::Literal(l)) => Ok(OpcodePayload::PushImm(l.to_data_type())),
+                SemanticOperand::Immediate(SemanticImmediateType::Label(label, offset)) => Ok(OpcodePayload::PushLabel(SymbolRef::new(label.name.clone(), *offset))),
+                SemanticOperand::Immediate(SemanticImmediateType::Binding(binding, offset)) => Ok(OpcodePayload::PushBinding(SymbolRef::new(binding.name.clone(), *offset))),
                 _ => no_matching_opcode!(mnemonic, operands)
             }
         }
@@ -268,6 +270,9 @@ fn select_opcode_move(mnemonic: OpcodeMnemonic, operands: &[SemanticOperand]) ->
         }
         (SemanticOperand::Register(reg), SemanticOperand::Immediate(SemanticImmediateType::Label(label, offset))) => {
             Ok(OpcodePayload::MovRegLabel(*reg, SymbolRef::new(label.name.clone(), *offset)))
+        }
+        (SemanticOperand::Register(reg), SemanticOperand::Immediate(SemanticImmediateType::Binding(binding, offset))) => {
+            Ok(OpcodePayload::MovRegBinding(*reg, SymbolRef::new(binding.name.clone(), *offset)))
         }
         _ => no_matching_opcode!(mnemonic, operands)
     }

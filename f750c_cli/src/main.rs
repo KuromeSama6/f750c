@@ -70,7 +70,9 @@ fn main() {
     info!("Output file name: {}", output_file_name);
 
     // write binary
-    let bin_path = PathBuf::from(format!("{output_file_name}.f750b"));
+    let output_dir = cli.output_directory.unwrap_or_else(|| PathBuf::from("."));
+
+    let bin_path = output_dir.join(format!("{output_file_name}.f750b"));
     if let Err(e) = fs::write(&bin_path, output.bytes.bytes_ref()) {
         error!("Error writing output file: {e}");
         return;
@@ -81,7 +83,7 @@ fn main() {
     if !cli.release {
         // write semantic debug
         {
-            let path = PathBuf::from(format!("{output_file_name}.semantic.txt"));
+            let path = output_dir.join(format!("{output_file_name}.semantic.txt"));
             let mut file = match File::create(&path) {
                 Ok(file) => file,
                 Err(e) => {
@@ -102,7 +104,7 @@ fn main() {
 
         // write semantic debug (expanded)
         {
-            let path = PathBuf::from(format!("{output_file_name}.semantic_expanded.txt"));
+            let path = output_dir.join(format!("{output_file_name}.semantic_expanded.txt"));
             let mut file = match File::create(&path) {
                 Ok(file) => file,
                 Err(e) => {
