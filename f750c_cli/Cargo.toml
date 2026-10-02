@@ -11,6 +11,7 @@ f750c = {path = "../f750c" }
 simple_logger = "5.2.0"
 log = "0.4.34"
 walkdir = "2.5.0"
+indexmap = "2.14.2"
 
 [[bin]]
 name = "f750c"

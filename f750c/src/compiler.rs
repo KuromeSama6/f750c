@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use indexmap::IndexMap;
+use log::info;
 use thiserror::Error;
 use crate::bytecode::{BytecodeSerialize, BytecodeStream};
 use crate::semantic::{SemanticBindingDef, SemanticDeref, SemanticDerefKind, SemanticImmediateType, SemanticInstruction, SemanticLiteral, SemanticOperand, SemanticRepr, SemanticSource, SemanticSymbol};
@@ -28,7 +29,7 @@ pub type CompileResult<T> = Result<T, CompilerError>;
 #[derive(Debug, Default)]
 pub struct BindingTable {
     entries: IndexMap<SymbolName, BindingTableEntry>,
-    tentative_entries: HashMap<SymbolName, SemanticBindingDef>,
+    tentative_entries: IndexMap<SymbolName, SemanticBindingDef>,
     counter: usize,
     const_deref_map: HashMap<SymbolName, bool>,
 }
@@ -81,7 +82,7 @@ impl BindingTable {
     pub fn new() -> Self {
         BindingTable {
             entries: IndexMap::new(),
-            tentative_entries: HashMap::new(),
+            tentative_entries: IndexMap::new(),
             counter: 0,
             const_deref_map: HashMap::new(),
         }
@@ -335,6 +336,10 @@ impl BindingTable {
             return false;
         }
 
+        if def.values.len() != 1 {
+            return false;
+        }
+
         if let Some(b) = self.const_deref_map.get(symbol) && *b {
             return true;
         }
@@ -358,10 +363,12 @@ impl BytecodeSerialize for BindingTable {
         let mut entries = Vec::new();
         let mut current_namespace: Option<&str> = None;
 
+        let mut written = 0usize;
         for (i, (symbol, entry)) in self.entries.iter().enumerate() {
             if matches!(entry.alloc, BindingAllocationType::Inline) {
                 continue;
             }
+            written += 1;
 
             entries.push((symbol, entry));
 
@@ -401,6 +408,13 @@ impl BytecodeSerialize for BindingTable {
             if let BindingAllocationType::Static(offset) = entry.alloc {
                 stream.write_varint64(offset as u64);
             }
+        }
+
+        if written == 0 {
+            info!("Binding table is empty, skipping data section");
+            info!("Note: This is expected if all bindings are inlined or if there are no bindings defined.");
+
+            stream.write_u8(1 << 5); // end
         }
 
         // Data section
@@ -506,6 +520,12 @@ impl BytecodeSerialize for LabelTable {
         let mut entries = Vec::new();
         let mut current_namespace: Option<&str> = None;
 
+        if self.entries.is_empty() {
+            info!("Note: Label table is empty, skipping label section");
+            stream.write_u8(1 << 3);
+            return;
+        }
+
         for (i, (symbol, entry)) in self.entries.iter().enumerate() {
             entries.push((symbol, entry));
 
@@ -543,18 +563,18 @@ impl BytecodeSerialize for LabelTable {
 
 #[derive(Debug, Clone)]
 pub struct EngCallTable {
-    pub entries: HashMap<String, u64>,
+    pub entries: IndexMap<String, u64>,
 }
 
 impl EngCallTable {
     pub fn new() -> Self {
         EngCallTable {
-            entries: HashMap::new(),
+            entries: IndexMap::new(),
         }
     }
 
     pub fn parse(lines: &IndexMap<String, Vec<SemanticRepr>>) -> CompileResult<Self> {
-        let mut entries = HashMap::new();
+        let mut entries = IndexMap::new();
         let mut count = 0u64;
 
         for (module_name, source) in lines {
@@ -588,6 +608,11 @@ impl BytecodeSerialize for EngCallTable {
     fn serialize(&self, stream: &mut BytecodeStream) {
         let mut entries: Vec<(&String, &u64)> = self.entries.iter().collect();
         entries.sort_by(|a, b| a.1.cmp(b.1));
+
+        if entries.is_empty() {
+            stream.write_u8(1 << 1);
+            return;
+        }
 
         for (i, (name, id)) in entries.iter().enumerate() {
             let mut flag = 0u8;

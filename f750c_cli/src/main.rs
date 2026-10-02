@@ -9,6 +9,7 @@ use std::mem::replace;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use clap::Parser;
+use indexmap::IndexMap;
 use log::{error, info};
 use walkdir::WalkDir;
 use f750c::{bytecode, CompilerInput, CompileResult};
@@ -128,7 +129,7 @@ fn main() {
 }
 
 fn read_compiler_input(path: &PathBuf) -> CompileResult<CompilerInput> {
-    let mut map = HashMap::new();
+    let mut map = IndexMap::new();
     let module_name = path.file_stem().unwrap()
         .to_string_lossy()
         .to_string();

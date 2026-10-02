@@ -92,7 +92,7 @@ impl Display for SemanticBindingDef {
 impl BytecodeSerialize for SemanticBindingDef {
     fn serialize(&self, stream: &mut BytecodeStream) {
         for value in &self.values {
-            value.serialize(stream);
+            value.serialize_raw(stream);
         }
     }
 }
@@ -114,7 +114,7 @@ impl SemanticLiteral {
             SemanticLiteral::UntypedInteger(_) => DataType::Qword.size(),
             SemanticLiteral::UntypedFloating(_) => DataType::Double.size(),
             SemanticLiteral::Typed(t) => t.size(),
-            SemanticLiteral::String(s) => s.len(),
+            SemanticLiteral::String(s) => s.len(), // raw bytes, no null terminator
         }
     }
 
@@ -124,6 +124,23 @@ impl SemanticLiteral {
             SemanticLiteral::UntypedFloating(f) => DataTypeLiteral::Double(*f),
             SemanticLiteral::Typed(t) => *t,
             SemanticLiteral::String(_) => panic!("Cannot convert string literal to DataType"),
+        }
+    }
+    
+    pub fn serialize_raw(&self, stream: &mut BytecodeStream) {
+        match self {
+            SemanticLiteral::UntypedInteger(i) => {
+                stream.write_u64(*i as u64);
+            }
+            SemanticLiteral::UntypedFloating(f) => {
+                stream.write_f64(*f);
+            }
+            SemanticLiteral::Typed(t) => {
+                t.serialize_raw(stream);
+            }
+            SemanticLiteral::String(s) => {
+                stream.write_bytes(s.as_bytes());
+            }
         }
     }
 }
@@ -143,18 +160,16 @@ impl BytecodeSerialize for SemanticLiteral {
     fn serialize(&self, stream: &mut BytecodeStream) {
         match self {
             SemanticLiteral::UntypedInteger(i) => {
-                let bytes = (*i as u64).to_be_bytes();
-                stream.write_bytes(&bytes);
+                DataTypeLiteral::Qword(*i as u64).serialize(stream);
             }
             SemanticLiteral::UntypedFloating(f) => {
-                let bytes = (*f).to_be_bytes();
-                stream.write_bytes(&bytes);
+                DataTypeLiteral::Double(*f).serialize(stream);
             }
             SemanticLiteral::Typed(t) => {
                 t.serialize(stream);
             }
             SemanticLiteral::String(s) => {
-                stream.write_bytes(s.as_bytes());
+                panic!("Cannot serialize string literal to bytecode.");
             }
         }
     }

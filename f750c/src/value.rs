@@ -139,6 +139,17 @@ impl DataTypeLiteral {
             DataTypeLiteral::Double(v) => v.to_string(),
         }
     }
+
+    pub fn serialize_raw(&self, stream: &mut BytecodeStream) {
+        match self {
+            DataTypeLiteral::Byte(v) => stream.write_u8(*v),
+            DataTypeLiteral::Word(v) => stream.write_u16(*v),
+            DataTypeLiteral::Dword(v) => stream.write_u32(*v),
+            DataTypeLiteral::Qword(v) => stream.write_u64(*v),
+            DataTypeLiteral::Float(v) => stream.write_f32(*v),
+            DataTypeLiteral::Double(v) => stream.write_f64(*v),
+        }
+    }
 }
 
 impl From<SemanticLiteral> for DataTypeLiteral {
@@ -156,10 +167,10 @@ impl BytecodeSerialize for DataTypeLiteral {
     fn serialize(&self, stream: &mut BytecodeStream) {
         stream.write_u8(self.data_type().size() as u8);
         match self {
-            DataTypeLiteral::Byte(v) => stream.write_u8(*v),
+            DataTypeLiteral::Byte(v) => stream.write_varint64(*v as u64),
             DataTypeLiteral::Word(v) => stream.write_varint64(*v as u64),
             DataTypeLiteral::Dword(v) => stream.write_varint64(*v as u64),
-            DataTypeLiteral::Qword(v) => stream.write_u64(*v),
+            DataTypeLiteral::Qword(v) => stream.write_varint64(*v),
             DataTypeLiteral::Float(v) => stream.write_varint64(*v as u64),
             DataTypeLiteral::Double(v) => stream.write_varint64(*v as u64),
         }

@@ -175,6 +175,7 @@ dependencies = [
  "anyhow",
  "clap",
  "f750c",
+ "indexmap",
  "log",
  "simple_logger",
  "thiserror",

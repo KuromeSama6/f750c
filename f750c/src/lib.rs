@@ -49,7 +49,7 @@ impl From<ConstructExpansionErrorDetails> for Error {
 /// Represents the input to the compiler, including the source code and module name.
 #[derive(Debug, Default)]
 pub struct CompilerInput {
-    pub sources: HashMap<String, Vec<String>>,
+    pub sources: IndexMap<String, Vec<String>>,
     pub module_name: String,
 }
 
